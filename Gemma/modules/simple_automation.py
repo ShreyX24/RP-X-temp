@@ -9,20 +9,34 @@ import logging
 import yaml
 from typing import List, Dict, Any, Optional, Union
 
-from modules.ui_elements import BoundingBox
+from modules.gemma_client import BoundingBox
 
 logger = logging.getLogger(__name__)
 
 class SimpleAutomation:
     """Fully modular step-by-step automation with comprehensive action support."""
     
-    def __init__(self, config_path, network, screenshot_mgr, vision_model, stop_event=None, run_dir=None):
-        """Initialize with all necessary components."""
+    def __init__(self, config_path, network, screenshot_mgr, vision_model, stop_event=None, run_dir=None, annotator=None, progress_callback=None):
+        """
+        Initialize with all necessary components.
+
+        Args:
+            config_path: Path to YAML configuration file
+            network: NetworkManager instance for SUT communication
+            screenshot_mgr: ScreenshotManager instance
+            vision_model: Vision model client (Omniparser/Gemma/Qwen)
+            stop_event: Threading event for stopping automation
+            run_dir: Directory to save logs and screenshots
+            annotator: Annotator instance for drawing bounding boxes
+            progress_callback: Optional callback object to update step progress (sets completed_steps and total_steps)
+        """
         self.config_path = config_path
         self.network = network
         self.screenshot_mgr = screenshot_mgr
         self.vision_model = vision_model
         self.stop_event = stop_event
+        self.annotator = annotator
+        self.progress_callback = progress_callback  # For updating GUI step progress (X/Y)
         
         # Load configuration
         try:
@@ -38,12 +52,14 @@ class SimpleAutomation:
         # Game metadata with enhanced support
         self.game_name = self.config.get("metadata", {}).get("game_name", "Unknown Game")
         self.process_id = self.config.get("metadata", {}).get("process_id")
-        self.startup_wait = self.config.get("metadata", {}).get("startup_wait", 10)
         self.run_dir = run_dir or f"logs/{self.game_name}"
         
         # Enhanced features
         self.enhanced_features = self.config.get("enhanced_features", {})
         self.monitor_process = self.enhanced_features.get("monitor_process_cpu", False)
+
+        # Retry configuration
+        self.retry_delay = self.config.get("metadata", {}).get("retry_delay", 2.0)
         
         # Optional step handlers
         self.optional_steps = self.config.get("optional_steps", {})
@@ -51,7 +67,13 @@ class SimpleAutomation:
         logger.info(f"SimpleAutomation initialized for {self.game_name}")
         if self.process_id:
             logger.info(f"Process ID tracking enabled: {self.process_id}")
-        logger.info(f"Startup wait time configured: {self.startup_wait} seconds")
+
+        # Log SUT resolution for debugging
+        try:
+            resolution = self.network.get_resolution()
+            logger.info(f"Detected SUT Resolution: {resolution['width']}x{resolution['height']}")
+        except Exception as e:
+            logger.warning(f"Could not determine SUT resolution: {e}")
 
     def _execute_fallback(self):
         """Execute fallback action when step fails."""
@@ -84,67 +106,132 @@ class SimpleAutomation:
         steps = normalized_steps
         
         logger.info(f"Starting enhanced automation with {len(steps)} steps")
-        
+
+        # Update total steps in progress callback (for X/Y display in GUI)
+        if self.progress_callback:
+            self.progress_callback.total_steps = len(steps)
+
         current_step = 1
         max_retries = 3
         retries = 0
         
         while current_step <= len(steps):
             step_key = str(current_step)
-            
+
             if step_key not in steps:
                 logger.error(f"Step {step_key} not found in configuration")
                 return False
-                
+
             step = steps[step_key]
-            logger.info(f"Executing step {current_step}: {step.get('description', 'No description')}")
-            
+            step_description = step.get('description', 'No description')
+
+            # Check if this is an optional step (either field-based or description-based)
+            # Method 1: Check for 'optional: true' field in YAML
+            # Method 2: Check for '[OPTIONAL]' in description text
+            is_optional_step = step.get('optional', False) or '[OPTIONAL]' in step_description.upper()
+            logger.info("=========================================================")
+            logger.info(f"Executing step {current_step}: {step_description}")
+            logger.info("=========================================================")
+
             # Check for stop event
             if self.stop_event and self.stop_event.is_set():
                 logger.info("Stop event detected, ending automation")
                 break
-            
+
             # Handle optional steps (popups, interruptions)
             if self._handle_optional_steps():
                 logger.info("Optional step handled, continuing with current step")
                 continue
-            
-            # Capture screenshot
-            screenshot_path = f"{self.run_dir}/screenshots/screenshot_{current_step}.png"
-            try:
-                self.screenshot_mgr.capture(screenshot_path)
-            except Exception as e:
-                logger.error(f"Failed to capture screenshot: {str(e)}")
-                retries += 1
-                if retries >= max_retries:
-                    return False
-                continue
-            
-            # Detect UI elements
-            try:
-                bounding_boxes = self.vision_model.detect_ui_elements(screenshot_path)
-            except Exception as e:
-                logger.error(f"Failed to detect UI elements: {str(e)}")
-                retries += 1
-                if retries >= max_retries:
-                    return False
-                continue
-            
-            
+
+            # Check if this step requires UI parsing (has a 'find' section)
+            # Steps like wait, key press without target element don't need parsing
+            needs_parsing = "find" in step
+
+            if needs_parsing:
+                # Capture screenshot
+                screenshot_path = f"{self.run_dir}/screenshots/screenshot_{current_step}.png"
+                try:
+                    self.screenshot_mgr.capture(screenshot_path)
+                except Exception as e:
+                    logger.error(f"Failed to capture screenshot: {str(e)}")
+                    # Handle optional step failure - skip instead of failing automation
+                    if is_optional_step:
+                        logger.warning(f"Optional step {current_step} screenshot capture failed, skipping to next step")
+                        current_step += 1
+                        retries = 0
+                        continue
+                    # Regular step - retry and fail if max retries reached
+                    retries += 1
+                    if retries >= max_retries:
+                        return False
+                    
+                    logger.info(f"Screenshot capture failed, waiting {self.retry_delay}s before retry...")
+                    time.sleep(self.retry_delay)
+                    continue
+
+                # Detect UI elements
+                try:
+                    bounding_boxes = self.vision_model.detect_ui_elements(screenshot_path)
+                except Exception as e:
+                    logger.error(f"Failed to detect UI elements: {str(e)}")
+                    # Handle optional step failure - skip instead of failing automation
+                    if is_optional_step:
+                        logger.warning(f"Optional step {current_step} UI detection failed, skipping to next step")
+                        current_step += 1
+                        retries = 0
+                        continue
+                    # Regular step - retry and fail if max retries reached
+                    retries += 1
+                    if retries >= max_retries:
+                        return False
+                    
+                    logger.info(f"UI element detection failed, waiting {self.retry_delay}s before retry...")
+                    time.sleep(self.retry_delay)
+                    continue
+
+                # Annotate screenshot if annotator available
+                if self.annotator:
+                    try:
+                        annotated_path = f"{self.run_dir}/annotated/annotated_{current_step}.png"
+                        self.annotator.draw_bounding_boxes(screenshot_path, bounding_boxes, annotated_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to create annotated screenshot: {str(e)}")
+            else:
+                # No parsing needed - action-only step (wait, key press, etc.)
+                logger.info(f"Skipping screenshot/parsing for action-only step")
+                bounding_boxes = []
+
             # Process step using modular action system
             success = self._process_step_modular(step, bounding_boxes, current_step)
-            
+
             if success:
-                logger.info(f"Step {current_step} completed successfully")
+                logger.info(f">> Step {current_step} completed successfully")
+                
+                # Update completed steps in progress callback (for X/Y display in GUI)
+                if self.progress_callback:
+                    self.progress_callback.completed_steps = current_step
+
                 current_step += 1
                 retries = 0
             else:
-                retries += 1
-                logger.warning(f"Step {current_step} failed, retry {retries}/{max_retries}")
-                if retries >= max_retries:
-                    logger.error(f"Max retries reached for step {current_step}")
-                    return False
-                self._execute_fallback()
+                # Handle optional step failure - skip to next step instead of failing automation
+                if is_optional_step:
+                    logger.warning(f"Optional step {current_step} failed, skipping to next step")
+                    current_step += 1
+                    retries = 0
+                else:
+                    # Regular step failure - retry and eventually fail if max retries reached
+                    retries += 1
+                    logger.warning(f"Step {current_step} failed, retry {retries}/{max_retries}")
+                    if retries >= max_retries:
+                        logger.error(f"Max retries reached for step {current_step}")
+                        return False
+                    
+                    if not is_optional_step:
+                         logger.info(f"Waiting {self.retry_delay}s before retry...")
+                         time.sleep(self.retry_delay)
+                    
+                    self._execute_fallback()
                 
         return current_step > len(steps)
     
@@ -240,6 +327,13 @@ class SimpleAutomation:
         elif action_type == "wait":
             return self._handle_wait_action(action_config)
         
+        # === HOLD ACTIONS ===
+        elif action_type == "hold_click":
+            return self._handle_hold_click_action(action_config, target_element)
+        
+        elif action_type == "hold_key":
+            return self._handle_hold_key_action(action_config)
+        
         # === CONDITIONAL ACTIONS ===
         elif action_type == "conditional":
             return self._handle_conditional_action(action_config, target_element)
@@ -255,7 +349,6 @@ class SimpleAutomation:
     def _handle_click_action(self, action_config: Dict[str, Any], target_element: Optional[BoundingBox]) -> bool:
         """Handle various click actions with enhanced logging."""
         button = action_config.get("button", "left").lower()
-        click_type = action_config.get("clickType", "pynput").lower()
         
         # Get element information for logging
         element_info = "unknown element"
@@ -283,7 +376,6 @@ class SimpleAutomation:
             "x": x,
             "y": y,
             "button": button,
-            "clickType": click_type,
             "move_duration": move_duration,
             "click_delay": click_delay
         }
@@ -291,7 +383,7 @@ class SimpleAutomation:
         try:
             response = self.network.send_action(action)
             # Enhanced logging with element information
-            logger.info(f"Clicked on {element_info} at ({x}, {y}) using {click_type}")
+            logger.info(f"Clicked on {element_info} at ({x}, {y})")
             if target_element and target_element.element_text:
                 logger.debug(f"Element details: type='{target_element.element_type}', text='{target_element.element_text}', size={target_element.width}x{target_element.height}")
             return True
@@ -326,8 +418,8 @@ class SimpleAutomation:
             
             # Support for special key names
             key_mapping = {
-                "enter": "Return",
-                "return": "Return",
+                "enter": "enter",
+                "return": "return",
                 "space": "space",
                 "tab": "Tab",
                 "escape": "Escape",
@@ -346,11 +438,10 @@ class SimpleAutomation:
             }
             
             mapped_key = key_mapping.get(key.lower(), key)
-            method_key = action_config.get("methodType", "pyautogui")
             
             try:
-                response = self.network.send_action({"type": "key", "key": mapped_key, "methodType": method_key})
-                logger.info(f"Pressed key: {mapped_key} using methodType: {method_key}")
+                response = self.network.send_action({"type": "key", "key": mapped_key})
+                logger.info(f"Pressed key: {mapped_key}")
                 return True
             except Exception as e:
                 logger.error(f"Failed to send key action: {str(e)}")
@@ -365,12 +456,10 @@ class SimpleAutomation:
         
         # Clear existing text if specified
         clear_first = action_config.get("clear_first", False)
-        method_key = action_config.get("methodType", "pyautogui")
-        
         if clear_first:
             try:
                 # Ctrl+A to select all, then type
-                self.network.send_action({"type": "hotkey", "keys": ["ctrl", "a"], "methodType": method_key})
+                self.network.send_action({"type": "hotkey", "keys": ["ctrl", "a"]})
                 time.sleep(0.1)
             except Exception as e:
                 logger.warning(f"Failed to clear existing text: {str(e)}")
@@ -384,18 +473,18 @@ class SimpleAutomation:
                     break
                     
                 if char == ' ':
-                    self.network.send_action({"type": "key", "key": "space", "methodType": method_key})
+                    self.network.send_action({"type": "key", "key": "space"})
                 elif char == '\n':
-                    self.network.send_action({"type": "key", "key": "Return", "methodType": method_key})
+                    self.network.send_action({"type": "key", "key": "Return"})
                 elif char == '\t':
-                    self.network.send_action({"type": "key", "key": "Tab", "methodType": method_key})
+                    self.network.send_action({"type": "key", "key": "Tab"})
                 else:
-                    self.network.send_action({"type": "key", "key": char, "methodType": method_key})
+                    self.network.send_action({"type": "key", "key": char})
                 
                 if char_delay > 0:
                     time.sleep(char_delay)
             
-            logger.info(f"Typed text: '{text[:50]}{'...' if len(text) > 50 else ''}' using method {method_key}")
+            logger.info(f"Typed text: '{text[:50]}{'...' if len(text) > 50 else ''}'")
             return True
             
         except Exception as e:
@@ -545,6 +634,61 @@ class SimpleAutomation:
         
         return True
     
+    def _handle_hold_click_action(self, action_config: Dict[str, Any], target_element: Optional[BoundingBox]) -> bool:
+        """Handle hold click actions - click and hold for a duration."""
+        button = action_config.get("button", "left").lower()
+        duration = action_config.get("duration", 2.0)
+        move_duration = action_config.get("move_duration", 0.3)
+        
+        # Get coordinates from target element or action config
+        if target_element:
+            x = target_element.x + target_element.width // 2
+            y = target_element.y + target_element.height // 2
+        elif "x" in action_config and "y" in action_config:
+            x = action_config["x"]
+            y = action_config["y"]
+        else:
+            logger.error("Hold click requires target element or x/y coordinates")
+            return False
+        
+        logger.info(f"Hold clicking {button} at ({x}, {y}) for {duration}s")
+        
+        try:
+            self.network.send_action({
+                "type": "hold_click",
+                "x": x,
+                "y": y,
+                "button": button,
+                "duration": duration,
+                "move_duration": move_duration
+            })
+            return True
+        except Exception as e:
+            logger.error(f"Hold click failed: {e}")
+            return False
+    
+    def _handle_hold_key_action(self, action_config: Dict[str, Any]) -> bool:
+        """Handle hold key actions - press and hold a key for a duration."""
+        key = action_config.get("key", "")
+        duration = action_config.get("duration", 2.0)
+        
+        if not key:
+            logger.error("Hold key requires a key to be specified")
+            return False
+        
+        logger.info(f"Holding key '{key}' for {duration}s")
+        
+        try:
+            self.network.send_action({
+                "type": "hold_key",
+                "key": key,
+                "duration": duration
+            })
+            return True
+        except Exception as e:
+            logger.error(f"Hold key failed: {e}")
+            return False
+    
     def _handle_conditional_action(self, action_config: Dict[str, Any], target_element: Optional[BoundingBox]) -> bool:
         """Handle conditional actions."""
         condition = action_config.get("condition", {})
@@ -614,22 +758,14 @@ class SimpleAutomation:
         return self._find_matching_element(trigger, bounding_boxes) is not None
     
     def _interruptible_wait(self, duration: int):
-        """Wait that can be interrupted by stop event with legacy progress logging."""
-        logger.info(f"Waiting {duration} seconds...")
-
+        """Wait that can be interrupted by stop event."""
         for i in range(duration):
             if self.stop_event and self.stop_event.is_set():
                 logger.info("Wait interrupted by stop event")
                 break
-
-            # Legacy progress logging every 10 seconds or on specific intervals
-            if i % 10 == 0 or i == duration - 1:
-                remaining = duration - i
-                logger.info(f"Waiting... {remaining} seconds remaining ({i}/{duration} elapsed)")
-
             time.sleep(1)
-
-        logger.info(f"Wait completed ({duration} seconds)")
+            if i % 10 == 0 and i > 0:
+                logger.info(f"Still waiting... {i}/{duration} seconds elapsed")
     
     def _find_matching_element(self, target_def, bounding_boxes):
         """Find a UI element matching the target definition with enhanced logging."""
@@ -667,7 +803,7 @@ class SimpleAutomation:
             
             if type_match and text_match:
                 element_text = bbox.element_text if bbox.element_text else "(no text)"
-                logger.debug(f"✅ Match found: {bbox.element_type} '{element_text}' at ({bbox.x}, {bbox.y})")
+                logger.debug(f"✅ Element found: {bbox.element_type} '{element_text}' at ({bbox.x}, {bbox.y})")
                 return bbox
         
         logger.debug("❌ No matching element found")
@@ -684,24 +820,18 @@ class SimpleAutomation:
             self.screenshot_mgr.capture(verify_path)
             verify_boxes = self.vision_model.detect_ui_elements(verify_path)
             
+            if self.annotator:
+                try:
+                    annotated_verify_path = f"{self.run_dir}/annotated/verify_{step_num}.png"
+                    self.annotator.draw_bounding_boxes(verify_path, verify_boxes, annotated_verify_path)
+                except Exception as e:
+                    logger.warning(f"Failed to create verification annotation: {str(e)}")
             
             success = True
-            verify_success = step["verify_success"]
-            
-            # Handle both single element and list of elements
-            if isinstance(verify_success, dict):
-                verify_elements = [verify_success]
-            elif isinstance(verify_success, list):
-                verify_elements = verify_success
-            else:
-                logger.error(f"Invalid verify_success format: {type(verify_success)}")
-                return False
-            
-            for verify_element in verify_elements:
+            for verify_element in step["verify_success"]:
                 if not self._find_matching_element(verify_element, verify_boxes):
                     success = False
-                    element_text = verify_element.get('text', 'Unknown element') if isinstance(verify_element, dict) else str(verify_element)
-                    logger.warning(f"Verification failed: {element_text} not found")
+                    logger.warning(f"Verification failed: {verify_element.get('text', 'Unknown element')} not found")
             
             return success
             
@@ -727,3 +857,386 @@ class SimpleAutomation:
 # import time
 # import logging
 # import yaml
+# from typing import List, Dict, Any, Optional
+
+# from modules.gemma_client import BoundingBox
+
+# logger = logging.getLogger(__name__)
+
+# class SimpleAutomation:
+#     """Simplified step-by-step automation for game UI workflows."""
+    
+#     def __init__(self, config_path, network, screenshot_mgr, vision_model, stop_event=None, run_dir=None, annotator=None):
+#         """Initialize with all necessary components."""
+#         self.config_path = config_path
+#         self.network = network
+#         self.screenshot_mgr = screenshot_mgr
+#         self.vision_model = vision_model
+#         self.stop_event = stop_event
+#         self.annotator = annotator
+        
+#         # Load configuration using SimpleConfigParser if available
+#         try:
+#             from modules.simple_config_parser import SimpleConfigParser
+#             config_parser = SimpleConfigParser(config_path)
+#             self.config = config_parser.get_config()
+#             logger.info("Using SimpleConfigParser for step-based configuration")
+#         except (ImportError, ValueError):
+#             # Fall back to direct YAML loading
+#             logger.info("SimpleConfigParser not available, loading YAML directly")
+#             with open(config_path, 'r') as f:
+#                 self.config = yaml.safe_load(f)
+        
+#         # Game metadata
+#         self.game_name = self.config.get("metadata", {}).get("game_name", "Unknown Game")
+#         self.run_dir = run_dir or f"logs/{self.game_name}"
+        
+#         logger.info(f"SimpleAutomation initialized for {self.game_name}")
+            
+#     def run(self):
+#         """Run the simplified step-by-step automation."""
+#         # Get steps from configuration
+#         steps = self.config.get("steps", {})
+        
+#         # If no steps defined, try to convert from state machine format
+#         if not steps:
+#             logger.info("No steps defined in config, attempting to convert from state machine format")
+#             steps = self._convert_states_to_steps()
+            
+#         if not steps:
+#             logger.error("No steps defined and couldn't convert from state machine format")
+#             return False
+        
+#         # Convert all step keys to strings to handle both integer and string keys
+#         normalized_steps = {}
+#         for key, value in steps.items():
+#             normalized_steps[str(key)] = value
+#         steps = normalized_steps
+        
+#         # Debug: Log the available steps
+#         logger.info(f"Available steps: {list(steps.keys())}")
+        
+#         current_step = 1
+#         max_retries = 3
+#         retries = 0
+        
+#         logger.info(f"Starting automation with {len(steps)} steps")
+        
+#         while current_step <= len(steps):
+#             step_key = str(current_step)
+            
+#             if step_key not in steps:
+#                 logger.error(f"Step {step_key} not found in configuration. Available steps: {list(steps.keys())}")
+#                 return False
+                
+#             step = steps[step_key]
+#             logger.info(f"Executing step {current_step}: {step.get('description', 'No description')}")
+            
+#             # Check for stop event
+#             if self.stop_event and self.stop_event.is_set():
+#                 logger.info("Stop event detected, ending automation")
+#                 break
+            
+#             # Capture screenshot
+#             screenshot_path = f"{self.run_dir}/screenshots/screenshot_{current_step}.png"
+#             try:
+#                 self.screenshot_mgr.capture(screenshot_path)
+#             except Exception as e:
+#                 logger.error(f"Failed to capture screenshot: {str(e)}")
+#                 retries += 1
+#                 if retries >= max_retries:
+#                     logger.error(f"Max retries reached for screenshot capture, failing")
+#                     return False
+#                 continue
+            
+#             # Detect UI elements
+#             try:
+#                 bounding_boxes = self.vision_model.detect_ui_elements(screenshot_path)
+#             except Exception as e:
+#                 logger.error(f"Failed to detect UI elements: {str(e)}")
+#                 retries += 1
+#                 if retries >= max_retries:
+#                     logger.error(f"Max retries reached for UI detection, failing")
+#                     return False
+#                 continue
+            
+#             # Annotate screenshot if annotator available
+#             if self.annotator:
+#                 try:
+#                     annotated_path = f"{self.run_dir}/annotated/annotated_{current_step}.png"
+#                     self.annotator.draw_bounding_boxes(screenshot_path, bounding_boxes, annotated_path)
+#                     logger.info(f"Annotated screenshot saved: {annotated_path}")
+#                 except Exception as e:
+#                     logger.warning(f"Failed to create annotated screenshot: {str(e)}")
+            
+#             # Process step based on type
+#             if "find_and_click" in step:
+#                 # Find and click element
+#                 target = step["find_and_click"]
+#                 element = self._find_matching_element(target, bounding_boxes)
+                
+#                 if element:
+#                     # Calculate center point for click
+#                     center_x = element.x + (element.width // 2)
+#                     center_y = element.y + (element.height // 2)
+                    
+#                     # Execute click
+#                     action = {"type": "click", "x": center_x, "y": center_y}
+#                     try:
+#                         response = self.network.send_action(action)
+#                         logger.info(f"Clicked on '{element.element_text}' at ({center_x}, {center_y})")
+#                         logger.debug(f"Network response: {response}")
+#                     except Exception as e:
+#                         logger.error(f"Failed to send click action: {str(e)}")
+#                         retries += 1
+#                         if retries >= max_retries:
+#                             logger.error(f"Max retries reached for click action, failing")
+#                             return False
+#                         continue
+                    
+#                     # Wait for expected delay
+#                     expected_delay = step.get("expected_delay", 2)
+#                     logger.info(f"Waiting {expected_delay} seconds after click...")
+#                     time.sleep(expected_delay)
+                    
+#                     # Verify success if specified
+#                     if step.get("verify_success"):
+#                         logger.info("Verifying step success...")
+#                         # Capture new screenshot for verification
+#                         verify_path = f"{self.run_dir}/screenshots/verify_{current_step}.png"
+#                         try:
+#                             self.screenshot_mgr.capture(verify_path)
+#                             verify_boxes = self.vision_model.detect_ui_elements(verify_path)
+                            
+#                             # Annotate verification screenshot if annotator available
+#                             if self.annotator:
+#                                 try:
+#                                     annotated_verify_path = f"{self.run_dir}/annotated/verify_{current_step}.png"
+#                                     self.annotator.draw_bounding_boxes(verify_path, verify_boxes, annotated_verify_path)
+#                                 except Exception as e:
+#                                     logger.warning(f"Failed to create verification annotation: {str(e)}")
+                            
+#                             # Check for verification elements
+#                             success = True
+#                             for verify_element in step["verify_success"]:
+#                                 if not self._find_matching_element(verify_element, verify_boxes):
+#                                     success = False
+#                                     logger.warning(f"Verification failed: {verify_element.get('text', 'Unknown element')} not found")
+                            
+#                             if success:
+#                                 logger.info(f"Step {current_step} completed successfully")
+#                                 current_step += 1
+#                                 retries = 0  # Reset retry counter on success
+#                             else:
+#                                 retries += 1
+#                                 logger.warning(f"Step {current_step} verification failed, retry {retries}/{max_retries}")
+#                                 if retries >= max_retries:
+#                                     logger.error(f"Max retries reached for step {current_step}, failing")
+#                                     return False
+#                                 # Execute fallback if verification fails
+#                                 self._execute_fallback()
+#                         except Exception as e:
+#                             logger.error(f"Failed during verification: {str(e)}")
+#                             retries += 1
+#                             if retries >= max_retries:
+#                                 logger.error(f"Max retries reached during verification, failing")
+#                                 return False
+#                             continue
+#                     else:
+#                         # No verification needed, move to next step
+#                         logger.info(f"Step {current_step} completed (no verification required)")
+#                         current_step += 1
+#                         retries = 0  # Reset retry counter on success
+#                 else:
+#                     retries += 1
+#                     target_text = target.get('text', 'Unknown')
+#                     target_type = target.get('type', 'any')
+#                     logger.warning(f"Target element '{target_text}' (type: {target_type}) not found, retry {retries}/{max_retries}")
+                    
+#                     # Log available elements for debugging
+#                     if bounding_boxes:
+#                         logger.info("Available UI elements:")
+#                         for i, bbox in enumerate(bounding_boxes):
+#                             logger.info(f"  {i+1}. Type: {bbox.element_type}, Text: '{bbox.element_text}'")
+#                     else:
+#                         logger.info("No UI elements detected")
+                    
+#                     if retries >= max_retries:
+#                         logger.error(f"Max retries reached for step {current_step}, failing")
+#                         return False
+#                     # Execute fallback if target not found
+#                     self._execute_fallback()
+                    
+#             elif "action" in step and step["action"] == "wait":
+#                 # Wait action
+#                 duration = step.get("duration", 10)
+#                 logger.info(f"Waiting for {duration} seconds")
+                
+#                 # Wait in smaller increments to allow for interruption
+#                 for i in range(duration):
+#                     if self.stop_event and self.stop_event.is_set():
+#                         logger.info("Wait interrupted by stop event")
+#                         break
+#                     time.sleep(1)
+#                     if i % 10 == 0 and i > 0:  # Log progress for long waits
+#                         logger.info(f"Still waiting... {i}/{duration} seconds elapsed")
+                
+#                 # Move to next step after wait
+#                 logger.info(f"Wait completed for step {current_step}")
+#                 current_step += 1
+#                 retries = 0  # Reset retry counter
+#             else:
+#                 logger.error(f"Unknown step type in step {current_step}: {step}")
+#                 return False
+                
+#         if current_step > len(steps):
+#             logger.info("All steps completed successfully!")
+#             return True
+#         else:
+#             logger.info("Automation stopped before completion")
+#             return False
+    
+#     def _find_matching_element(self, target_def, bounding_boxes):
+#         """Find a UI element matching the target definition."""
+#         target_type = target_def.get("type", "any")
+#         target_text = target_def.get("text", "")
+#         match_type = target_def.get("text_match", "contains")
+        
+#         logger.debug(f"Looking for element: type='{target_type}', text='{target_text}', match='{match_type}'")
+        
+#         for bbox in bounding_boxes:
+#             # Check element type
+#             type_match = (target_type == "any" or bbox.element_type == target_type)
+            
+#             # Check text content with specified matching strategy
+#             text_match = False
+#             if bbox.element_text and target_text:
+#                 bbox_text_lower = bbox.element_text.lower()
+#                 target_text_lower = target_text.lower()
+                
+#                 if match_type == "exact":
+#                     text_match = target_text_lower == bbox_text_lower
+#                 elif match_type == "contains":
+#                     text_match = target_text_lower in bbox_text_lower
+#                 elif match_type == "startswith":
+#                     text_match = bbox_text_lower.startswith(target_text_lower)
+#                 elif match_type == "endswith":
+#                     text_match = bbox_text_lower.endswith(target_text_lower)
+#                 else:
+#                     logger.warning(f"Unknown text_match type: {match_type}, using 'contains'")
+#                     text_match = target_text_lower in bbox_text_lower
+#             elif not target_text:  # If no text requirement, match any element of the right type
+#                 text_match = True
+            
+#             if type_match and text_match:
+#                 logger.debug(f"Found matching element: type='{bbox.element_type}', text='{bbox.element_text}'")
+#                 return bbox
+                
+#         logger.debug("No matching element found")
+#         return None
+        
+#     def _execute_fallback(self):
+#         """Execute fallback action if step fails."""
+#         fallback = self.config.get("fallbacks", {}).get("general", {})
+#         if fallback:
+#             action_type = fallback.get("action")
+#             if action_type == "key":
+#                 key = fallback.get("key", "Escape")
+#                 logger.info(f"Executing fallback: Press key {key}")
+#                 try:
+#                     self.network.send_action({"type": "key", "key": key})
+#                 except Exception as e:
+#                     logger.error(f"Failed to execute fallback key action: {str(e)}")
+#             elif action_type == "click":
+#                 x = fallback.get("x", 0)
+#                 y = fallback.get("y", 0)
+#                 logger.info(f"Executing fallback: Click at ({x}, {y})")
+#                 try:
+#                     self.network.send_action({"type": "click", "x": x, "y": y})
+#                 except Exception as e:
+#                     logger.error(f"Failed to execute fallback click action: {str(e)}")
+#         else:
+#             logger.info("No fallback action defined, pressing Escape key as default")
+#             try:
+#                 self.network.send_action({"type": "key", "key": "Escape"})
+#             except Exception as e:
+#                 logger.error(f"Failed to execute default fallback action: {str(e)}")
+                
+#         # Wait after fallback
+#         fallback_delay = fallback.get("expected_delay", 1) if fallback else 1
+#         logger.info(f"Waiting {fallback_delay} seconds after fallback action")
+#         time.sleep(fallback_delay)
+        
+#     def _convert_states_to_steps(self):
+#         """
+#         Attempt to convert state machine format to step format.
+#         This allows using existing YAML files with the simple automation.
+#         """
+#         steps = {}
+#         states = self.config.get("states", {})
+#         transitions = self.config.get("transitions", {})
+#         initial_state = self.config.get("initial_state")
+        
+#         if not states or not transitions or not initial_state:
+#             logger.warning("Missing required state machine components for conversion")
+#             return {}
+            
+#         # Start with initial state
+#         current_state = initial_state
+#         step_num = 1
+#         visited_states = set()
+        
+#         # Prevent infinite loops
+#         while current_state not in visited_states and step_num <= 10:
+#             visited_states.add(current_state)
+            
+#             # Find transitions from current state
+#             for transition_key, transition in transitions.items():
+#                 if transition_key.startswith(f"{current_state}->"):
+#                     to_state = transition_key.split("->")[1]
+#                     action_type = transition.get("action")
+                    
+#                     # Create step based on transition type
+#                     if action_type == "click":
+#                         target = transition.get("target", {})
+                        
+#                         step = {
+#                             "description": f"Click to go from {current_state} to {to_state}",
+#                             "find_and_click": {
+#                                 "type": target.get("type", "any"),
+#                                 "text": target.get("text", ""),
+#                                 "text_match": target.get("text_match", "contains")
+#                             },
+#                             "expected_delay": transition.get("expected_delay", 2)
+#                         }
+                        
+#                         # Add verification if target state has required elements
+#                         if to_state in states:
+#                             verify = []
+#                             for req in states[to_state].get("required_elements", []):
+#                                 verify.append({
+#                                     "type": req.get("type", "any"),
+#                                     "text": req.get("text", ""),
+#                                     "text_match": req.get("text_match", "contains")
+#                                 })
+#                             if verify:
+#                                 step["verify_success"] = verify
+                        
+#                         steps[str(step_num)] = step
+#                         step_num += 1
+#                         current_state = to_state
+#                         break
+                        
+#                     elif action_type == "wait":
+#                         step = {
+#                             "description": f"Wait during {current_state}",
+#                             "action": "wait",
+#                             "duration": transition.get("duration", 10)
+#                         }
+#                         steps[str(step_num)] = step
+#                         step_num += 1
+#                         current_state = to_state
+#                         break
+        
+#         logger.info(f"Converted state machine to {len(steps)} steps")
+#         return steps

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Client for interacting with the Omniparser server.
 Sends screenshots and receives UI element detections.
@@ -15,23 +16,27 @@ from dataclasses import dataclass
 from io import BytesIO
 from PIL import Image
 
-from modules.gemma_client import BoundingBox  # Reuse the BoundingBox class
+from modules.ui_elements import BoundingBox  # Reuse the BoundingBox class
 
 logger = logging.getLogger(__name__)
 
 class OmniparserClient:
     """Client for the Omniparser API server with streamlined annotation handling."""
     
-    def __init__(self, api_url: str = "http://localhost:8000"):
+    def __init__(self, api_url: str = "http://localhost:8000", screen_width: int = 1920, screen_height: int = 1080):
         """
         Initialize the Omniparser client.
         
         Args:
             api_url: URL of the Omniparser API server
+            screen_width: Screen width for coordinate scaling (default: 1920)
+            screen_height: Screen height for coordinate scaling (default: 1080)
         """
         self.api_url = api_url
         self.session = requests.Session()
-        logger.info(f"OmniparserClient initialized with API URL: {api_url}")
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+        logger.info(f"OmniparserClient initialized with API URL: {api_url}, resolution: {screen_width}x{screen_height}")
         
         # Test connection to the API
         try:
@@ -60,14 +65,13 @@ class OmniparserClient:
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
     
-    def _parse_omniparser_response(self, response_data: Dict, image_size: Tuple[int, int]) -> List[BoundingBox]:
+    def _parse_omniparser_response(self, response_data: Dict) -> List[BoundingBox]:
         """
         Parse the response from Omniparser into BoundingBox objects.
         COMPREHENSIVE filtering to capture ALL useful elements for gaming performance analysis.
         
         Args:
             response_data: Response JSON from Omniparser
-            image_size: Tuple of (width, height) used for scaling normalized coordinates
             
         Returns:
             List of BoundingBox objects
@@ -81,10 +85,6 @@ class OmniparserClient:
         # Log first item as sample if available
         if parsed_content_list and len(parsed_content_list) > 0:
             logger.debug(f"First item example: {json.dumps(parsed_content_list[0], indent=2)}")
-        
-        # Get image dimensions for scaling
-        img_width, img_height = image_size
-        logger.info(f"Scaling normalized coordinates to image size: {img_width}x{img_height}")
         
         # Counters for different element types
         interactive_count = 0
@@ -103,11 +103,11 @@ class OmniparserClient:
                     # Omniparser uses normalized coordinates [x1, y1, x2, y2]
                     x1, y1, x2, y2 = bbox_coords
                     
-                    # Convert normalized to absolute coordinates using image dimensions
-                    abs_x1 = int(x1 * img_width)
-                    abs_y1 = int(y1 * img_height)
-                    abs_x2 = int(x2 * img_width)
-                    abs_y2 = int(y2 * img_height)
+                    # Convert normalized to absolute coordinates
+                    abs_x1 = int(x1 * self.screen_width)
+                    abs_y1 = int(y1 * self.screen_height)
+                    abs_x2 = int(x2 * self.screen_width)
+                    abs_y2 = int(y2 * self.screen_height)
                     
                     # Get element properties
                     is_interactive = element.get('interactivity', False)
@@ -128,7 +128,7 @@ class OmniparserClient:
                         should_include = True
                         inclusion_reason = "has_content"
                         text_count += 1
-
+                        
                         # Check if this looks like performance data
                         if any(keyword in element_content.lower() for keyword in [
                             'fps', 'avg', 'p1', 'p99', 'frame', 'ms', 'hz', 'performance',
@@ -157,10 +157,10 @@ class OmniparserClient:
                             element_text=element_content
                         )
                         bounding_boxes.append(bbox)
-
+                        
                         # Log important elements
                         if inclusion_reason == "performance_data":
-                            logger.info(f"🎯 PERFORMANCE DATA: '{element_content[:50]}...'")
+                            logger.info(f"[PERF] PERFORMANCE DATA: '{element_content[:50]}...'")
                         else:
                             logger.debug(f"Added element ({inclusion_reason}): type='{element_type}', content='{element_content[:30]}...'")
                     else:
@@ -227,29 +227,21 @@ class OmniparserClient:
             if not os.path.exists(image_path):
                 raise FileNotFoundError(f"Image file not found: {image_path}")
             
-            # Open image to get dimensions for correct scaling
-            with Image.open(image_path) as img:
-                image_size = img.size # (width, height)
-                logger.debug(f"Loaded image {image_path} with size: {image_size}")
-
             # Encode the image
             base64_image = self._encode_image(image_path)
             
-            # Prepare the payload for Omniparser with optimal thresholds
+            # Prepare the payload for Omniparser
             payload = {
-                "base64_image": base64_image,
-                "box_threshold": 0.05,
-                "iou_threshold": 0.1,
-                "use_paddleocr": True
+                "base64_image": base64_image
             }
-
+            
             # Send the request to Omniparser API
-            logger.info(f"Sending request to {self.api_url}/parse/ with box_threshold=0.05, iou_threshold=0.1, use_paddleocr=True")
+            logger.info(f"Sending request to {self.api_url}/parse/")
             response = self.session.post(
                 f"{self.api_url}/parse/",
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=300  # Longer timeout for image processing
+                timeout=60  # Longer timeout for image processing
             )
             response.raise_for_status()
             
@@ -260,8 +252,8 @@ class OmniparserClient:
             if "latency" in response_data:
                 logger.info(f"Omniparser processing time: {response_data['latency']:.2f} seconds")
             
-            # Extract and convert bounding boxes using ACTUAL image size
-            bounding_boxes = self._parse_omniparser_response(response_data, image_size)
+            # Extract and convert bounding boxes
+            bounding_boxes = self._parse_omniparser_response(response_data)
             
             # STREAMLINED ANNOTATION HANDLING - Single source of truth
             if "som_image_base64" in response_data:
@@ -322,6 +314,8 @@ class OmniparserClient:
                 element_text = bbox.element_text if bbox.element_text else "(no text)"
                 if len(element_text) > 30:
                     element_text = element_text[:27] + "..."
+                # Sanitize Unicode characters for logging
+                element_text = element_text.encode('ascii', errors='replace').decode('ascii')
                 logger.info(f"  [{i+1}] {bbox.element_type} at ({bbox.x},{bbox.y},{bbox.width}x{bbox.height}): '{element_text}'")
         else:
             logger.info("  No UI elements detected")

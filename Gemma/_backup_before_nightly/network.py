@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Network communication module for ARL-SUT interaction.
 Handles all network operations between the development PC and the system under test.
@@ -54,64 +55,6 @@ class NetworkManager:
             logger.error(f"Connection check failed: {str(e)}")
             raise ConnectionError(f"Cannot connect to SUT at {self.base_url}: {str(e)}")
     
-    def get_resolution(self) -> dict:
-        """
-        Get the screen resolution of the SUT.
-        
-        Returns:
-            Dictionary with 'width' and 'height' keys
-        """
-        try:
-            response = self.session.get(f"{self.base_url}/status", timeout=5)
-            response.raise_for_status()
-            data = response.json()
-            return {
-                "width": data.get("screen_width", 1920),
-                "height": data.get("screen_height", 1080)
-            }
-        except Exception as e:
-            logger.warning(f"Failed to get resolution from SUT, defaulting to 1920x1080: {e}")
-            return {"width": 1920, "height": 1080}
-
-    def login_steam(self, username: str, password: str) -> bool:
-        """
-        Login to Steam via SUT service.
-        
-        Args:
-            username: Steam username
-            password: Steam password
-        
-        Returns:
-            True if login successful, False otherwise
-        """
-        try:
-            payload = {"username": username, "password": password}
-            logger.info(f"[Steam] Logging in as: {username}")
-            
-            # Timeout: kill processes (~3s) + steam.exe launch + login (~60s)
-            response = self.session.post(f"{self.base_url}/login_steam", json=payload, timeout=120)
-            
-            result = response.json()
-            status = result.get('status', 'unknown')
-            message = result.get('message', '')
-            user_id = result.get('user_id', '')
-            
-            if status == 'success':
-                logger.info(f"[Steam] ✓ Login successful: {message}")
-                if user_id:
-                    logger.info(f"[Steam] User ID: {user_id}")
-                return True
-            elif status == 'warning':
-                logger.warning(f"[Steam] ⚠ {message}")
-                return True  # Proceed with caution
-            else:
-                logger.error(f"[Steam] ✗ Login failed: {message or result.get('error', 'Unknown error')}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"[Steam] Request failed: {e}")
-            return False
-
     def send_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """
         Send an action command to the SUT.
@@ -162,14 +105,65 @@ class NetworkManager:
             logger.error(f"Failed to get screenshot: {str(e)}")
             raise
     
-    def launch_game(self, game_path: str, process_id: str = '', startup_wait: int = 15) -> Dict[str, Any]:
+    def get_screen_resolution(self) -> tuple[int, int]:
+        """
+        Get the screen resolution from the SUT.
+
+        Tries /screen_info first, falls back to parsing /status response.
+
+        Returns:
+            Tuple of (width, height)
+
+        Raises:
+            RequestException: If the request fails
+        """
+        # Try dedicated /screen_info endpoint first
+        try:
+            response = self.session.get(
+                f"{self.base_url}/screen_info",
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("status") == "success":
+                width = data.get("screen_width")
+                height = data.get("screen_height")
+                logger.info(f"Screen resolution retrieved from /screen_info: {width}x{height}")
+                return width, height
+
+        except requests.RequestException as e:
+            logger.debug(f"/screen_info not available, trying /status: {str(e)}")
+
+        # Fallback: parse screen info from /status endpoint
+        try:
+            response = self.session.get(
+                f"{self.base_url}/status",
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            screen = data.get("screen", {})
+            width = screen.get("width")
+            height = screen.get("height")
+
+            if width and height:
+                logger.info(f"Screen resolution retrieved from /status: {width}x{height}")
+                return width, height
+            else:
+                raise Exception("Screen info not found in /status response")
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to get screen resolution: {str(e)}")
+            raise
+    
+    def launch_game(self, game_path: str) -> Dict[str, Any]:
         """
         Request the SUT to launch a game.
 
         Args:
-            game_path: Path to the game executable or Steam app ID on the SUT
-            process_id: Optional process name to wait for after launch (e.g., 'Launcher', 'Game')
-            startup_wait: Maximum seconds to wait for process to appear (default: 15)
+            game_path: Path to the game executable or Steam App ID on the SUT
 
         Returns:
             Response from the SUT as a dictionary
@@ -178,25 +172,21 @@ class NetworkManager:
             RequestException: If the request fails
         """
         try:
-            # Prepare request payload with game metadata
-            payload = {
-                "path": game_path,
-                "process_id": process_id,
-                "startup_wait": startup_wait
-            }
-            
-            logger.debug(f"Sending launch request to {self.base_url}/launch with payload: {payload}")
+            # Determine if it's a Steam App ID or exe path
+            if game_path.isdigit():
+                payload = {"steam_app_id": game_path}
+            else:
+                # Send both formats for compatibility with different SUT client versions
+                payload = {"exe_path": game_path, "path": game_path}
 
             response = self.session.post(
                 f"{self.base_url}/launch",
                 json=payload,
-                timeout=90
+                timeout=120  # Increased timeout for game launch with window detection
             )
             response.raise_for_status()
             result = response.json()
-            
-            logger.debug(f"Launch response received: status={result.get('status')}, foreground={result.get('foreground_confirmed')}")
-            logger.info(f"Game launch request sent: {game_path}, process_id: {process_id}, startup_wait: {startup_wait}")
+            logger.info(f"Game launch request sent: {game_path}")
             return result
         except requests.RequestException as e:
             logger.error(f"Failed to launch game {game_path}: {str(e)}")

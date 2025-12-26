@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Enhanced Decision Engine module based on Finite State Machine principles.
 Supports flexible text matching and state context for any game benchmark.
@@ -7,7 +8,7 @@ import logging
 import time
 from typing import List, Dict, Any, Tuple, Optional, Set
 
-from modules.gemma_client import BoundingBox
+from modules.ui_elements import BoundingBox
 
 logger = logging.getLogger(__name__)
 
