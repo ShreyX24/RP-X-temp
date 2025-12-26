@@ -201,10 +201,13 @@ class NetworkManager:
 
             logger.debug(f"Sending launch request to {self.base_url}/launch with payload: {payload}")
 
+            # Timeout must be longer than startup_wait (SUT waits for process to appear)
+            # Add 60s buffer for process detection retries and response time
+            http_timeout = max(120, startup_wait + 60)
             response = self.session.post(
                 f"{self.base_url}/launch",
                 json=payload,
-                timeout=90
+                timeout=http_timeout
             )
             response.raise_for_status()
             result = response.json()
@@ -216,6 +219,16 @@ class NetworkManager:
             logger.error(f"Failed to launch game {game_path}: {str(e)}")
             raise
     
+    def get_sut_status(self) -> Dict[str, Any]:
+        """Get the current status of the SUT including game state."""
+        try:
+            response = self.session.get(f"{self.base_url}/status", timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to get SUT status: {str(e)}")
+            raise
+
     def close(self):
         """Close the network session."""
         self.session.close()

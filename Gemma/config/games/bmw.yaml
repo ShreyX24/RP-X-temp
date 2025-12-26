@@ -2,7 +2,7 @@
 metadata:
   game_name: "Black Myth Wukong"
   path: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Black Myth Wukong Benchmark Tool\\b1\\Binaries\\Win64\\b1-Win64-Shipping.exe"
-  process_id: "b1"  # Actual process name in Task Manager
+  process_id: "b1"  # Substring match - will find b1-Win64-Shipping.exe
   version: "1.0"
   benchmark_duration: 150
   startup_wait: 50
@@ -12,10 +12,10 @@ metadata:
 # Simple step-by-step workflow
 steps:
   1:
-    description: "Click Anywhere in the screen"
+    description: "Click Anywhere in the screen (intro)"
     find:
-      type: "text"
-      text: "Wukong"
+      type: "any"
+      text: "BLACK"
       text_match: "contains"
     action:
       type: "click"
@@ -27,7 +27,7 @@ steps:
         text: "Benchmark"
         text_match: "contains"
     expected_delay: 10
-    timeout: 20
+    timeout: 30
 
   2:
     description: "Click Benchmark"
@@ -95,8 +95,8 @@ steps:
       type: "key"
       key: "enter"
     verify_success:
-      - type: "icon"
-        text: "Wukong"
+      - type: "any"
+        text: ["Wukong", "WUKONG", "WUKONO", "BLACK"]
         text_match: "contains"
     expected_delay: 10
     timeout: 20
@@ -105,7 +105,7 @@ steps:
     description: "Click Anywhere in the screen"
     find:
       type: "any"
-      text: "Wukong"
+      text: ["Wukong", "WUKONG", "WUKONO", "BLACK"]
       text_match: "contains"
     action:
       type: "click"
@@ -136,7 +136,7 @@ steps:
     description: "Click Confirm to exit to desktop"
     find:
       type: "any"
-      text: "quit to desktop"
+      text: ["quit to desktop", "quit to the desktop"]
       text_match: "contains"
     action:
       type: "key"
@@ -151,50 +151,3 @@ fallbacks:
     key: "Escape"
     expected_delay: 1
     max_retries: 3
-
-Click: 2
-Key: Escape, Enter
-
-1:
-  description: "Click Exit "
-  find:
-    type: "any"
-    text: "Exit"
-    text_match: "contains"
-  action:
-    type: "click"
-    button: "Right"
-  verify_success:
-    - type: "any"
-      text: "Confirm"
-  expected_delay: 5
-  timeout: 20
-
-2:
-  description: "Click Play "
-  find:
-    type: "any"
-    text: "Play"
-    text_match: "contains"
-  action:
-    type: "key"
-    button: "enter"
-  verify_success:
-    - type: "any"
-      text: "Settings"
-  expected_delay: 5
-  timeout: 20
-3:
-  description: "Click Settings "
-  find:
-    type: "any"
-    text: "Settings"
-    text_match: "contains"
-  action:
-    type: "key"
-    button: "m"
-  verify_success:
-    - type: "any"
-      text: "Video"
-  expected_delay: 5
-  timeout: 20

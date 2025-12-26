@@ -382,8 +382,8 @@ class SimpleAutomation:
         
         try:
             response = self.network.send_action(action)
-            # Enhanced logging with element information
-            logger.info(f"Clicked on {element_info} at ({x}, {y})")
+            # Enhanced logging with element information and button type
+            logger.info(f"Clicked ({button}) on {element_info} at ({x}, {y})")
             if target_element and target_element.element_text:
                 logger.debug(f"Element details: type='{target_element.element_type}', text='{target_element.element_text}', size={target_element.width}x{target_element.height}")
             return True
@@ -772,40 +772,51 @@ class SimpleAutomation:
         target_type = target_def.get("type", "any")
         target_text = target_def.get("text", "")
         match_type = target_def.get("text_match", "contains")
-        
-        logger.debug(f"Searching for element: type='{target_type}', text='{target_text}', match_strategy='{match_type}'")
-        
+
+        # Support multiple text alternatives (list of strings = OR logic)
+        if isinstance(target_text, list):
+            target_texts = target_text
+        else:
+            target_texts = [target_text] if target_text else []
+
+        logger.debug(f"Searching for element: type='{target_type}', text={target_texts}, match_strategy='{match_type}'")
+
         for bbox in bounding_boxes:
             # Check element type
             type_match = (target_type == "any" or bbox.element_type == target_type)
-            
-            # Check text content
+
+            # Check text content - try all text alternatives (OR logic)
             text_match = False
-            if bbox.element_text and target_text:
+            if bbox.element_text and target_texts:
                 bbox_text_lower = bbox.element_text.lower()
-                target_text_lower = target_text.lower()
-                
-                if match_type == "exact":
-                    text_match = target_text_lower == bbox_text_lower
-                elif match_type == "contains":
-                    text_match = target_text_lower in bbox_text_lower
-                elif match_type == "startswith":
-                    text_match = bbox_text_lower.startswith(target_text_lower)
-                elif match_type == "endswith":
-                    text_match = bbox_text_lower.endswith(target_text_lower)
-                
+
+                for target_text_option in target_texts:
+                    target_text_lower = target_text_option.lower()
+
+                    if match_type == "exact":
+                        text_match = target_text_lower == bbox_text_lower
+                    elif match_type == "contains":
+                        text_match = target_text_lower in bbox_text_lower
+                    elif match_type == "startswith":
+                        text_match = bbox_text_lower.startswith(target_text_lower)
+                    elif match_type == "endswith":
+                        text_match = bbox_text_lower.endswith(target_text_lower)
+
+                    if text_match:
+                        break  # Found a match, no need to check other alternatives
+
                 # Debug logging for text matching attempts
                 if type_match:
                     logger.debug(f"  Checking element '{bbox.element_text}': text_match={text_match} (strategy={match_type})")
-                    
-            elif not target_text:
+
+            elif not target_texts:
                 text_match = True
-            
+
             if type_match and text_match:
                 element_text = bbox.element_text if bbox.element_text else "(no text)"
                 logger.debug(f"✅ Element found: {bbox.element_type} '{element_text}' at ({bbox.x}, {bbox.y})")
                 return bbox
-        
+
         logger.debug("❌ No matching element found")
         return None
             

@@ -860,22 +860,29 @@ class APIRoutes:
                     # Use Discovery Service to find device by IP (sync version for Flask)
                     try:
                         suts = self.discovery_client.get_suts_sync()
-                        for sut in suts:
-                            if sut.get("ip") == sut_ip:
-                                device_id = sut.get("unique_id")
-                                # Check if online
-                                if sut.get("status") != "online" and not sut.get("is_online"):
-                                    return jsonify({"error": f"SUT {sut_ip} is not online"}), 400
-                                # Create a simple object with required attributes
-                                class DeviceProxy:
-                                    def __init__(self, data):
-                                        self.unique_id = data.get("unique_id")
-                                        self.ip = data.get("ip")
-                                        self.port = data.get("port", 8080)
-                                        self.hostname = data.get("hostname")
-                                        self.is_online = data.get("is_online", data.get("status") == "online")
-                                device = DeviceProxy(sut)
-                                break
+                        # Find an online SUT with matching IP (prefer online over offline)
+                        matching_suts = [s for s in suts if s.get("ip") == sut_ip]
+                        online_sut = next((s for s in matching_suts if s.get("status") == "online" or s.get("is_online")), None)
+
+                        if online_sut:
+                            sut = online_sut
+                        elif matching_suts:
+                            # All matching SUTs are offline
+                            return jsonify({"error": f"SUT {sut_ip} is not online"}), 400
+                        else:
+                            sut = None
+
+                        if sut:
+                            device_id = sut.get("unique_id")
+                            # Create a simple object with required attributes
+                            class DeviceProxy:
+                                def __init__(self, data):
+                                    self.unique_id = data.get("unique_id")
+                                    self.ip = data.get("ip")
+                                    self.port = data.get("port", 8080)
+                                    self.hostname = data.get("hostname")
+                                    self.is_online = data.get("is_online", data.get("status") == "online")
+                            device = DeviceProxy(sut)
                     except Exception as e:
                         logger.error(f"Error querying Discovery Service: {e}")
                         return jsonify({"error": f"Failed to query Discovery Service: {str(e)}"}), 500

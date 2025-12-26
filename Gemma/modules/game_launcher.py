@@ -3,6 +3,7 @@ Game Launcher module for starting games on the SUT.
 """
 
 import logging
+import requests
 from typing import Dict, Any
 
 from modules.network import NetworkManager
@@ -75,6 +76,24 @@ class GameLauncher:
                 logger.error(f"Failed to launch game: {error_msg}")
                 raise RuntimeError(f"Game launch failed: {error_msg}")
 
+        except requests.exceptions.ReadTimeout as e:
+            # Timeout occurred - check if game is actually running
+            logger.warning(f"Launch request timed out, checking if game is running...")
+            try:
+                status = self.network_manager.get_sut_status()
+                game_info = status.get("game", {})
+                if game_info.get("running") and game_info.get("process_name"):
+                    proc_name = game_info.get("process_name")
+                    proc_pid = game_info.get("pid")
+                    logger.info(f"Game is running despite timeout: {proc_name} (PID: {proc_pid})")
+                    logger.info("Proceeding with automation - SUT foreground detection was slow")
+                    return True
+                else:
+                    logger.error(f"Game not running after timeout: {str(e)}")
+                    raise RuntimeError(f"Game launch timed out and game is not running")
+            except Exception as check_err:
+                logger.error(f"Failed to verify game status after timeout: {check_err}")
+                raise RuntimeError(f"Game launch error: {str(e)}")
         except Exception as e:
             logger.error(f"Error launching game: {str(e)}")
             raise RuntimeError(f"Game launch error: {str(e)}")

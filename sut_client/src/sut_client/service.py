@@ -279,8 +279,10 @@ def create_app() -> Flask:
             exe_path = data.get('exe_path')
             # Support legacy 'path' parameter from Gemma NetworkManager
             legacy_path = data.get('path')
-            process_name = data.get('process_name')
+            # Support both 'process_name' and 'process_id' (Gemma sends process_id)
+            process_name = data.get('process_name') or data.get('process_id')
             force_relaunch = data.get('force_relaunch', False)
+            startup_wait = data.get('startup_wait', 30)  # Default 30 seconds
 
             # Handle legacy 'path' parameter - could be exe path or Steam App ID
             if not steam_app_id and not exe_path and legacy_path:
@@ -298,12 +300,19 @@ def create_app() -> Flask:
                     "message": "Either steam_app_id, exe_path, or path is required"
                 }), 400
 
+            # Map startup_wait to retry behavior
+            # startup_wait / retry_interval = retry_count
+            retry_interval = 10
+            retry_count = max(3, startup_wait // retry_interval)
+
             result = launch_game(
                 steam_app_id=steam_app_id,
                 exe_path=exe_path,
                 process_name=process_name,
                 force_relaunch=force_relaunch,
-                settings=settings
+                settings=settings,
+                retry_count=retry_count,
+                retry_interval=retry_interval
             )
 
             return jsonify(result)
@@ -552,9 +561,12 @@ def create_app() -> Flask:
             return jsonify({"status": "error", "message": str(e)}), 500
 
     @app.route('/kill_process', methods=['POST'])
+    @app.route('/kill', methods=['POST'])  # Alias for convenience
     def kill_process_route():
         """
         Kill a process by name.
+
+        Endpoints: /kill_process, /kill
 
         Request body:
         {

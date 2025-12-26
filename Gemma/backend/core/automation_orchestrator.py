@@ -55,28 +55,32 @@ class AutomationOrchestrator:
                 # Use Discovery Service to find device by IP (sync version)
                 try:
                     suts = self.discovery_client.get_suts_sync()
-                    for sut in suts:
-                        if sut.get("ip") == run.sut_ip:
-                            # Create a simple object with required attributes
-                            class DeviceProxy:
-                                def __init__(self, data):
-                                    self.unique_id = data.get("unique_id")
-                                    self.ip = data.get("ip")
-                                    self.port = data.get("port", 8080)
-                                    self.hostname = data.get("hostname")
-                                    self.is_online = data.get("is_online", data.get("status") == "online")
-                            device = DeviceProxy(sut)
-                            break
+                    # Find an online SUT with matching IP (prefer online over offline)
+                    matching_suts = [s for s in suts if s.get("ip") == run.sut_ip]
+                    online_sut = next((s for s in matching_suts if s.get("status") == "online" or s.get("is_online")), None)
+
+                    if online_sut:
+                        # Create a simple object with required attributes
+                        class DeviceProxy:
+                            def __init__(self, data):
+                                self.unique_id = data.get("unique_id")
+                                self.ip = data.get("ip")
+                                self.port = data.get("port", 8080)
+                                self.hostname = data.get("hostname")
+                                self.is_online = True  # We know it's online
+                        device = DeviceProxy(online_sut)
+                    elif matching_suts:
+                        # All matching SUTs are offline
+                        return False, None, f"SUT {run.sut_ip} is not online"
                 except Exception as e:
                     logger.error(f"Error querying Discovery Service: {e}")
             else:
                 device = self.device_registry.get_device_by_ip(run.sut_ip)
+                if device and not device.is_online:
+                    return False, None, f"SUT {run.sut_ip} is not online"
 
             if not device:
                 return False, None, f"SUT {run.sut_ip} not found"
-
-            if not device.is_online:
-                return False, None, f"SUT {run.sut_ip} is not online"
             
             # Execute multiple iterations
             successful_runs = 0
@@ -184,7 +188,7 @@ class AutomationOrchestrator:
             
             # Create a stop event for this iteration
             stop_event = threading.Event()
-            
+
             # Initialize SimpleAutomation
             automation = SimpleAutomation(
                 config_path=game_config.yaml_path,
@@ -194,7 +198,10 @@ class AutomationOrchestrator:
                 stop_event=stop_event,
                 run_dir=run_dir,
             )
-            
+
+            # Sync preset to SUT before launching (uses preset-manager service)
+            self._sync_preset_to_sut(game_config, device)
+
             # Discover game path from SUT or use YAML config as fallback
             game_path = self._discover_game_path(network, game_config)
 
@@ -202,7 +209,11 @@ class AutomationOrchestrator:
                 logger.info(f"Launching game: {game_path}")
 
                 try:
-                    game_launcher.launch(game_path)
+                    # Pass process_id and startup_wait from game config
+                    process_id = game_config.process_id or ''
+                    startup_wait = game_config.startup_wait
+                    logger.info(f"Launch params - process_id: {process_id}, startup_wait: {startup_wait}s")
+                    game_launcher.launch(game_path, process_id=process_id, startup_wait=startup_wait)
                     logger.info(f"Game launched successfully: {game_path}")
                 except Exception as e:
                     error_msg = f"Failed to launch game '{game_config.name}': {str(e)}"
@@ -215,12 +226,13 @@ class AutomationOrchestrator:
                         error_msg = f"Connection error: Cannot reach SUT at {device.ip}:{device.port}. Please check if the SUT service is running."
 
                     raise RuntimeError(error_msg)
-                
-                # Wait for game startup as specified in YAML
-                startup_wait = game_config.startup_wait
-                
-                logger.info(f"Waiting {startup_wait}s for game initialization...")
-                time.sleep(startup_wait)
+
+                # Wait for game to fully initialize
+                # SUT returns after process detection, game needs a bit more time to load UI
+                # Keep this short - automation steps have their own timeouts
+                init_wait = 15  # Fixed 15s post-detection wait
+                logger.info(f"Game process detected, waiting {init_wait}s for full game initialization...")
+                time.sleep(init_wait)
             
             # Check if run was stopped during initialization
             if run.status != RunStatus.RUNNING:
@@ -421,6 +433,73 @@ class AutomationOrchestrator:
     def _get_run_directory(self, run: AutomationRun) -> str:
         """Get the base run directory path"""
         return f"logs/{run.game_name.replace(' ', '_')}/run_{run.run_id}"
+
+    def _sync_preset_to_sut(self, game_config, device) -> bool:
+        """
+        Sync game preset to SUT before launching.
+
+        Uses the preset-manager service to push the appropriate preset level
+        to the SUT device.
+
+        Args:
+            game_config: GameConfig object with game metadata
+            device: Device proxy with unique_id
+
+        Returns:
+            True if sync successful, False otherwise (non-fatal)
+        """
+        import requests
+
+        # Get game short name from game_config name
+        # Convention: "Black Myth Wukong" -> "black-myth-wukong"
+        game_short_name = game_config.name.lower().replace(" ", "-").replace(":", "").replace("'", "")
+
+        # Handle special cases for game name mapping
+        name_mappings = {
+            "black-myth-wukong": "black-myth-wukong",
+            "shadow-of-the-tomb-raider": "shadow-of-tomb-raider",
+            "red-dead-redemption-2": "red-dead-redemption-2",
+        }
+        game_short_name = name_mappings.get(game_short_name, game_short_name)
+
+        # Default preset level (could be made configurable per game)
+        preset_level = "ppg-high-1080p"
+
+        # Get device unique ID
+        device_unique_id = getattr(device, 'unique_id', None)
+        if not device_unique_id:
+            logger.warning(f"Device {device.ip} has no unique_id, skipping preset sync")
+            return False
+
+        try:
+            preset_manager_url = "http://localhost:5002"
+
+            logger.info(f"Syncing preset '{preset_level}' for game '{game_short_name}' to SUT {device_unique_id}")
+
+            response = requests.post(
+                f"{preset_manager_url}/api/sync/push",
+                json={
+                    "game_short_name": game_short_name,
+                    "preset_level": preset_level,
+                    "sut_unique_ids": [device_unique_id]
+                },
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                logger.info(f"Preset sync successful: {result.get('message', 'OK')}")
+                return True
+            else:
+                logger.warning(f"Preset sync failed (status {response.status_code}): {response.text}")
+                return False
+
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"Preset-manager not available at {preset_manager_url}, skipping preset sync")
+            return False
+        except Exception as e:
+            logger.warning(f"Error syncing preset: {e}")
+            return False
     
     def validate_prerequisites(self, run: AutomationRun) -> tuple[bool, Optional[str]]:
         """Validate that all prerequisites are met for running automation"""
@@ -439,13 +518,17 @@ class AutomationOrchestrator:
             if self.discovery_client:
                 try:
                     suts = self.discovery_client.get_suts_sync()
-                    for sut in suts:
-                        if sut.get("ip") == run.sut_ip:
-                            is_online = sut.get("is_online", sut.get("status") == "online")
-                            if not is_online:
-                                return False, f"SUT {run.sut_ip} is not online"
-                            device = sut
-                            break
+                    # Find an online SUT with matching IP (prefer online over offline)
+                    matching_suts = [s for s in suts if s.get("ip") == run.sut_ip]
+                    online_sut = next((s for s in matching_suts if s.get("status") == "online" or s.get("is_online")), None)
+
+                    if online_sut:
+                        device = online_sut
+                    elif matching_suts:
+                        # All matching SUTs are offline
+                        return False, f"SUT {run.sut_ip} is not online"
+                    else:
+                        device = None
                 except Exception as e:
                     logger.error(f"Error querying Discovery Service: {e}")
                     return False, f"Failed to query Discovery Service: {str(e)}"

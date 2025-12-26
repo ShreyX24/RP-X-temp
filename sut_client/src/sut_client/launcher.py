@@ -46,14 +46,14 @@ launch_cancel_flag = threading.Event()
 # Process Detection
 # =============================================================================
 
-def find_process_by_name(process_name: str, exact_only: bool = True) -> Optional[psutil.Process]:
+def find_process_by_name(process_name: str, exact_only: bool = False) -> Optional[psutil.Process]:
     """
     Find a running process by its name.
 
     Args:
-        process_name: Name of process to find (e.g., "RDR2.exe")
-        exact_only: If True (default), only exact matches are returned.
-                    If False, substring matches are also allowed.
+        process_name: Name of process to find (e.g., "RDR2.exe" or "b1")
+        exact_only: If True, only exact matches are returned.
+                    If False (default), substring matches are also allowed.
 
     Returns:
         psutil.Process or None
@@ -71,10 +71,10 @@ def find_process_by_name(process_name: str, exact_only: bool = True) -> Optional
                         logger.info(f"[EXACT] Found process: {proc_name} (PID: {proc.info['pid']})")
                         return psutil.Process(proc.info['pid'])
                 else:
-                    # Partial/substring match
+                    # Partial/substring match (like old gemma_client_0.2.py)
                     if (proc_name and process_name.lower() in proc_name.lower()) or \
                        (proc_exe and process_name.lower() in proc_exe.lower()):
-                        logger.info(f"[PARTIAL] Found process: {proc_name} (PID: {proc.info['pid']})")
+                        logger.info(f"[SUBSTRING] Found process: {proc_name} (PID: {proc.info['pid']})")
                         return psutil.Process(proc.info['pid'])
 
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
