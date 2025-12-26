@@ -560,11 +560,124 @@ class APIRoutes:
             try:
                 if not self.game_manager:
                     return jsonify({"error": "Game manager not available"}), 500
-                
+
                 stats = self.game_manager.get_game_stats()
                 return jsonify(stats)
             except Exception as e:
                 logger.error(f"Error getting game stats: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/games/<game_name>/check-availability', methods=['GET'])
+        def check_game_availability(game_name):
+            """
+            Check if a game is available (installed) on a specific SUT.
+
+            Query Parameters:
+                sut_ip: IP address of the SUT to check
+
+            Returns:
+                {
+                    "available": true/false,
+                    "game_name": "Shadow of the Tomb Raider",
+                    "steam_app_id": "750920",
+                    "install_path": "D:\\Games\\SOTR",
+                    "sut_ip": "192.168.0.103",
+                    "match_method": "steam_app_id" | "name" | null
+                }
+            """
+            try:
+                import requests as http_requests
+
+                sut_ip = request.args.get('sut_ip')
+                if not sut_ip:
+                    return jsonify({"error": "sut_ip query parameter required"}), 400
+
+                # Get game config to get steam_app_id
+                if not self.game_manager:
+                    return jsonify({"error": "Game manager not available"}), 500
+
+                game_config = self.game_manager.get_game(game_name)
+                if not game_config:
+                    return jsonify({"error": f"Game '{game_name}' not found in configuration"}), 404
+
+                config_steam_app_id = getattr(game_config, 'steam_app_id', None)
+
+                # Query SUT for installed games
+                try:
+                    response = http_requests.get(
+                        f"http://{sut_ip}:8080/installed_games",
+                        timeout=10
+                    )
+
+                    if response.status_code != 200:
+                        return jsonify({
+                            "available": False,
+                            "game_name": game_name,
+                            "steam_app_id": config_steam_app_id,
+                            "sut_ip": sut_ip,
+                            "error": f"SUT returned status {response.status_code}",
+                            "match_method": None
+                        })
+
+                    data = response.json()
+                    installed_games = data.get("games", [])
+
+                    # PRIORITY 1: Match by Steam App ID
+                    if config_steam_app_id:
+                        for game in installed_games:
+                            sut_app_id = game.get("steam_app_id")
+                            if sut_app_id and str(sut_app_id) == str(config_steam_app_id):
+                                if game.get("exists", True):
+                                    logger.info(f"Game '{game_name}' available on SUT {sut_ip} via steam_app_id {config_steam_app_id}")
+                                    return jsonify({
+                                        "available": True,
+                                        "game_name": game.get("name", game_name),
+                                        "steam_app_id": str(config_steam_app_id),
+                                        "install_path": game.get("install_path"),
+                                        "sut_ip": sut_ip,
+                                        "match_method": "steam_app_id"
+                                    })
+
+                    # PRIORITY 2: Match by game name
+                    game_name_lower = game_name.lower()
+                    for game in installed_games:
+                        installed_name = game.get("name", "").lower()
+                        if game_name_lower in installed_name or installed_name in game_name_lower:
+                            if game.get("exists", True):
+                                logger.info(f"Game '{game_name}' available on SUT {sut_ip} via name match")
+                                return jsonify({
+                                    "available": True,
+                                    "game_name": game.get("name", game_name),
+                                    "steam_app_id": game.get("steam_app_id"),
+                                    "install_path": game.get("install_path"),
+                                    "sut_ip": sut_ip,
+                                    "match_method": "name"
+                                })
+
+                    # Not found
+                    logger.info(f"Game '{game_name}' NOT available on SUT {sut_ip}")
+                    return jsonify({
+                        "available": False,
+                        "game_name": game_name,
+                        "steam_app_id": config_steam_app_id,
+                        "sut_ip": sut_ip,
+                        "match_method": None,
+                        "installed_games_count": len(installed_games)
+                    })
+
+                except http_requests.RequestException as e:
+                    logger.warning(f"Failed to query SUT {sut_ip}: {e}")
+                    return jsonify({
+                        "available": False,
+                        "game_name": game_name,
+                        "steam_app_id": config_steam_app_id,
+                        "sut_ip": sut_ip,
+                        "error": f"Failed to connect to SUT: {str(e)}",
+                        "match_method": None
+                    })
+
+            except Exception as e:
+                logger.error(f"Error checking game availability: {e}")
                 return jsonify({"error": str(e)}), 500
 
         # ==========================================================================

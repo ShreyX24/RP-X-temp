@@ -339,7 +339,11 @@ class AutomationOrchestrator:
     def _discover_game_path(self, network, game_config) -> Optional[str]:
         """
         Discover game from SUT's installed games and return Steam App ID or path.
-        Falls back to YAML config path if not found.
+
+        Priority order:
+        1. Match by steam_app_id from YAML config (most reliable)
+        2. Match by game name (fallback)
+        3. Use YAML config path (last resort)
 
         Args:
             network: NetworkManager instance
@@ -348,6 +352,9 @@ class AutomationOrchestrator:
         Returns:
             Steam App ID (preferred) or path to game executable
         """
+        # If we have steam_app_id in YAML config, verify it's installed on SUT
+        config_steam_app_id = getattr(game_config, 'steam_app_id', None)
+
         try:
             # Try to get installed games from SUT
             response = network.session.get(
@@ -359,7 +366,19 @@ class AutomationOrchestrator:
                 data = response.json()
                 installed_games = data.get("games", [])
 
-                # Try to find matching game by name
+                # PRIORITY 1: Match by Steam App ID from YAML config
+                if config_steam_app_id:
+                    for game in installed_games:
+                        sut_app_id = game.get("steam_app_id")
+                        if sut_app_id and str(sut_app_id) == str(config_steam_app_id):
+                            if game.get("exists", True):
+                                logger.info(f"Found game '{game.get('name')}' on SUT via Steam App ID: {config_steam_app_id}")
+                                return config_steam_app_id
+
+                    # steam_app_id in config but game not installed on SUT
+                    logger.warning(f"Steam App ID {config_steam_app_id} from config not found in SUT's installed games")
+
+                # PRIORITY 2: Match by game name (fallback for configs without steam_app_id)
                 game_name_lower = game_config.name.lower()
                 for game in installed_games:
                     installed_name = game.get("name", "").lower()
@@ -386,7 +405,13 @@ class AutomationOrchestrator:
         except Exception as e:
             logger.warning(f"Error discovering game path from SUT: {e}")
 
-        # Fallback to YAML config path
+        # PRIORITY 3: Use steam_app_id from config even if we couldn't verify on SUT
+        # (SUT might not have /installed_games endpoint, but can still launch by app id)
+        if config_steam_app_id:
+            logger.info(f"Using Steam App ID from YAML config: {config_steam_app_id}")
+            return config_steam_app_id
+
+        # PRIORITY 4: Fallback to YAML config path
         if game_config.path:
             logger.info(f"Using YAML config path: {game_config.path}")
             return game_config.path

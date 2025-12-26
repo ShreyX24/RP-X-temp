@@ -95,6 +95,26 @@ export async function reloadGames(): Promise<unknown> {
   });
 }
 
+export interface GameAvailabilityResult {
+  available: boolean;
+  game_name: string;
+  steam_app_id: string | null;
+  install_path?: string;
+  sut_ip: string;
+  match_method: 'steam_app_id' | 'name' | null;
+  error?: string;
+  installed_games_count?: number;
+}
+
+export async function checkGameAvailability(
+  gameName: string,
+  sutIp: string
+): Promise<GameAvailabilityResult> {
+  return fetchJson<GameAvailabilityResult>(
+    `${API_BASE}/games/${encodeURIComponent(gameName)}/check-availability?sut_ip=${encodeURIComponent(sutIp)}`
+  );
+}
+
 // Automation Run APIs
 export async function getRuns(): Promise<RunsResponse> {
   return fetchJson<RunsResponse>(`${API_BASE}/runs`);
@@ -175,3 +195,8 @@ export function createWebSocketConnection(
 }
 
 export { ApiError };
+
+// Re-export service-specific APIs
+export * from './queueService';
+export * from './presetManager';
+export * from './workflowBuilder';

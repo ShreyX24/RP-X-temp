@@ -26,6 +26,7 @@ class GameConfig:
     preset: str
     yaml_path: str
     startup_wait: int = 30  # Startup wait time in seconds
+    steam_app_id: Optional[str] = None  # Steam App ID for launching via Steam
     last_modified: Optional[datetime] = None
 
 
@@ -128,6 +129,7 @@ class GameConfigManager:
                 preset=metadata.get('preset', 'High'),
                 yaml_path=yaml_file,
                 startup_wait=metadata.get('startup_wait', 30),
+                steam_app_id=metadata.get('steam_app_id'),  # Steam App ID for launching
                 last_modified=last_modified
             )
             

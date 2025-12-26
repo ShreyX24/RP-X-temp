@@ -21,17 +21,21 @@ logger = logging.getLogger(__name__)
 
 class OmniparserClient:
     """Client for the Omniparser API server with streamlined annotation handling."""
-    
-    def __init__(self, api_url: str = "http://localhost:8000"):
+
+    def __init__(self, api_url: str = "http://localhost:8000", screen_width: int = 1920, screen_height: int = 1080):
         """
         Initialize the Omniparser client.
-        
+
         Args:
             api_url: URL of the Omniparser API server
+            screen_width: Screen width for coordinate scaling (optional)
+            screen_height: Screen height for coordinate scaling (optional)
         """
         self.api_url = api_url
+        self.screen_width = screen_width
+        self.screen_height = screen_height
         self.session = requests.Session()
-        logger.info(f"OmniparserClient initialized with API URL: {api_url}")
+        logger.info(f"OmniparserClient initialized with API URL: {api_url} (screen: {screen_width}x{screen_height})")
         
         # Test connection to the API
         try:
@@ -210,14 +214,14 @@ class OmniparserClient:
     def detect_ui_elements(self, image_path: str, annotation_path: str = None) -> List[BoundingBox]:
         """
         Send an image to Omniparser and get UI element detections with streamlined annotation handling.
-        
+
         Args:
             image_path: Path to the screenshot image
             annotation_path: Optional path to save server annotation (NEW STREAMLINED APPROACH)
-        
+
         Returns:
             List of detected UI elements with bounding boxes
-        
+
         Raises:
             RequestException: If the API request fails
             ValueError: If the response cannot be parsed
@@ -226,10 +230,10 @@ class OmniparserClient:
             # Check if the image file exists
             if not os.path.exists(image_path):
                 raise FileNotFoundError(f"Image file not found: {image_path}")
-            
+
             # Open image to get dimensions for correct scaling
             with Image.open(image_path) as img:
-                image_size = img.size # (width, height)
+                image_size = img.size  # (width, height)
                 logger.debug(f"Loaded image {image_path} with size: {image_size}")
 
             # Encode the image

@@ -155,3 +155,218 @@ export interface ErrorNotification {
   sut_ip?: string;
   timestamp: string;
 }
+
+// ============================================
+// Queue Service Types
+// ============================================
+
+export interface QueueStats {
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  timeout_requests: number;
+  current_queue_size: number;
+  worker_running: boolean;
+  avg_processing_time: number;
+  avg_queue_wait_time: number;
+  requests_per_minute: number;
+  uptime_seconds: number;
+}
+
+export interface QueueJob {
+  job_id: string;
+  timestamp: string;
+  status: 'success' | 'failed' | 'timeout';
+  processing_time: number;
+  queue_wait_time: number;
+  image_size: number;
+  error?: string;
+}
+
+export interface QueueDepthPoint {
+  timestamp: string;
+  depth: number;
+}
+
+export interface QueueHealth {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  worker_running: boolean;
+  queue_size: number;
+  uptime_seconds: number;
+  omniparser_status?: 'online' | 'offline' | 'error';
+  version?: string;
+  omniparser_url?: string;
+}
+
+// ============================================
+// Preset Manager Types
+// ============================================
+
+export interface PresetGame {
+  short_name: string;
+  name: string;
+  version?: string;
+  description?: string;
+  default_level?: string;
+  available_levels: string[];
+  preset_count: number;
+  steam_app_id?: string;
+  enabled: boolean;
+}
+
+export interface PresetLevel {
+  level: string;
+  description?: string;
+  target_gpu?: string;
+  resolution?: string;
+  target_fps?: number;
+  version?: string;
+  file_count: number;
+}
+
+export interface PresetFile {
+  filename: string;
+  size: number;
+  hash: string;
+  modified: string;
+}
+
+export interface SyncStats {
+  total_games: number;
+  total_presets: number;
+  total_suts: number;
+  online_suts: number;
+  sync_manager_ready: boolean;
+}
+
+export interface SyncResult {
+  game: string;
+  level: string;
+  sut_count: number;
+  status: 'success' | 'partial' | 'failed';
+  message: string;
+  results?: Array<{
+    sut_id: string;
+    success: boolean;
+    error?: string;
+  }>;
+}
+
+export interface BackupInfo {
+  backup_id: string;
+  game_slug: string;
+  created_at: string;
+  file_count: number;
+  total_size: number;
+}
+
+// ============================================
+// Workflow Builder Types
+// ============================================
+
+export interface BoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  element_type: 'icon' | 'text';
+  element_text: string;
+  confidence?: number;
+}
+
+export interface ParsedScreenshot {
+  elements: BoundingBox[];
+  annotated_image_base64?: string;
+  element_count: number;
+  processing_time: number;
+}
+
+export interface WorkflowStep {
+  step_number: number;
+  description: string;
+  action_type: 'find_and_click' | 'right_click' | 'double_click' | 'middle_click'
+             | 'key' | 'hotkey' | 'text' | 'drag' | 'scroll' | 'wait'
+             | 'hold_key' | 'hold_click';
+  find?: {
+    type: 'icon' | 'text' | 'any';
+    text: string;
+    text_match: 'contains' | 'exact' | 'startswith' | 'endswith';
+  };
+  action?: {
+    type: string;
+    button?: 'left' | 'right' | 'middle';
+    key?: string;
+    keys?: string[];
+    text?: string;
+    duration?: number;
+    clicks?: number;
+    direction?: 'up' | 'down';
+    dest_x?: number;
+    dest_y?: number;
+    move_duration?: number;
+    click_delay?: number;
+    clear_first?: boolean;
+    char_delay?: number;
+  };
+  verify_success?: Array<{
+    type: 'icon' | 'text' | 'any';
+    text: string;
+    text_match: 'contains' | 'exact' | 'startswith' | 'endswith';
+  }>;
+  expected_delay: number;
+  timeout: number;
+  optional?: boolean;
+}
+
+export interface Workflow {
+  game_name: string;
+  game_path?: string;
+  process_name?: string;
+  version?: string;
+  benchmark_duration?: number;
+  startup_wait?: number;
+  resolution?: string;
+  preset?: string;
+  steps: WorkflowStep[];
+}
+
+export interface ActionResult {
+  success: boolean;
+  message: string;
+  response_time?: number;
+  error?: string;
+}
+
+export interface PerformanceMetrics {
+  cpu_usage: number;
+  ram_usage: number;
+  gpu_usage?: number;
+  cpu_temp?: number;
+  gpu_temp?: number;
+}
+
+// ============================================
+// Service Health Types (for dashboard)
+// ============================================
+
+export interface ServiceHealthStatus {
+  name: string;
+  displayName: string;
+  status: 'online' | 'offline' | 'error' | 'starting';
+  url: string;
+  port: number;
+  details?: Record<string, unknown>;
+  lastChecked: string;
+  onlineSuts?: number;
+}
+
+export interface AllServicesHealth {
+  gemmaBackend: ServiceHealthStatus;
+  discoveryService: ServiceHealthStatus;
+  queueService: ServiceHealthStatus & { queueDepth?: number };
+  presetManager: ServiceHealthStatus;
+  omniparserInstances: Array<ServiceHealthStatus & {
+    instanceId: number;
+    enabled: boolean;
+  }>;
+}

@@ -178,13 +178,27 @@ class NetworkManager:
             RequestException: If the request fails
         """
         try:
+            # Detect if game_path is a Steam App ID (purely numeric)
+            is_steam_app_id = game_path.isdigit()
+
             # Prepare request payload with game metadata
-            payload = {
-                "path": game_path,
-                "process_id": process_id,
-                "startup_wait": startup_wait
-            }
-            
+            if is_steam_app_id:
+                # Use steam_app_id field for Steam launches
+                payload = {
+                    "steam_app_id": game_path,
+                    "process_id": process_id,
+                    "startup_wait": startup_wait
+                }
+                logger.info(f"Launching via Steam App ID: {game_path}")
+            else:
+                # Use path field for executable launches (legacy)
+                payload = {
+                    "path": game_path,
+                    "process_id": process_id,
+                    "startup_wait": startup_wait
+                }
+                logger.info(f"Launching via executable path: {game_path}")
+
             logger.debug(f"Sending launch request to {self.base_url}/launch with payload: {payload}")
 
             response = self.session.post(
