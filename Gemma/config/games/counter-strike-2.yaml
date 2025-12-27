@@ -1,5 +1,6 @@
 metadata:
   game_name: Counter-Strike 2
+  preset_id: counter-strike-2  # Maps to preset-manager folder name
   version: '2.0'
   created_with: Katana Workflow Builder
   created_date: '2025-11-21 13:45:12'

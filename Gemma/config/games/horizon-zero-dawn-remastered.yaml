@@ -1,6 +1,6 @@
 # HorizonZeroDawnRemastered Benchmark Configuration
 metadata:
-  game_name: "Horizon ZeroDawn Remastered"
+  game_name: "Horizon Zero Dawn Remastered"
   preset_id: horizon-zero-dawn-remastered  # Maps to preset-manager folder name
   steam_app_id: '2561580'
   # ORIGINAL: path: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Horizon Zero Dawn Remastered\\HorizonZeroDawnRemastered.exe"

@@ -1,6 +1,6 @@
 # ffxiv dawntrail Benchmark Configuration
 metadata:
-  game_name: "ffxiv dawntrail"
+  game_name: "Final Fantasy XIV: Dawntrail"
   preset_id: final-fantasy-xiv-dawntrail  # Maps to preset-manager folder name
   # ORIGINAL: path: "C:\\Users\\Administrator\\Downloads\\ffxiv-dawntrail-bench_v11\\ffxiv-dawntrail-bench.exe"  # path may vary as its not steam game
   path: "D:\\Games\\ffxiv-dawntrail-bench_v11\\ffxiv-dawntrail-bench.exe"  # TEMP: Updated to D: drive (non-Steam game)
