@@ -1,3 +1,7 @@
 [submodule "Omniparser server"]
 	path = Omniparser server
 	url = https://github.com/YpS-YpS/OmniLocal.git
+[submodule "preset-manager"]
+	path = preset-manager
+	url = https://github.com/ShreyX24/preset-manager.git
+	branch = pre-prod/v7-E2E
