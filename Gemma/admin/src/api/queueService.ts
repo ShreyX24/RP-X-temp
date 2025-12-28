@@ -72,13 +72,29 @@ export async function getQueueHealth(): Promise<QueueHealth> {
 }
 
 /**
+ * OmniParser server status from probe response
+ */
+export interface OmniParserServerStatus {
+  url: string;
+  status: 'healthy' | 'unhealthy' | 'error' | 'unknown';
+  last_used?: string;
+  requests_served?: number;
+}
+
+/**
+ * Probe response from queue service
+ */
+export interface QueueProbeResponse {
+  status: string;
+  overall_omniparser_status: string;
+  omniparser_status: OmniParserServerStatus[];
+  stats: QueueStats;
+}
+
+/**
  * Probe the queue service (includes OmniParser status)
  */
-export async function probeQueueService(): Promise<{
-  status: string;
-  omniparser_status: string;
-  stats: QueueStats;
-}> {
+export async function probeQueueService(): Promise<QueueProbeResponse> {
   return fetchQueueJson('/probe');
 }
 

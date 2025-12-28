@@ -241,24 +241,65 @@ export function Settings() {
           {/* Service Status */}
           <SettingsSection
             title="Service Status"
-            description="Current status of all Gemma services"
+            description="Current status of all Raptor X services"
           >
             <div className="space-y-2">
               {[
-                { name: 'Gemma Backend', status: services?.gemmaBackend.status || 'offline', url: serviceUrls.gemmaBackend },
-                { name: 'SUT Discovery', status: services?.discoveryService.status || 'offline', url: serviceUrls.discoveryService },
-                { name: 'Preset Manager', status: services?.presetManager.status || 'offline', url: serviceUrls.presetManager },
-                { name: 'Queue Service', status: services?.queueService.status || 'offline', url: serviceUrls.queueService },
+                {
+                  name: 'Raptor X Backend',
+                  status: services?.gemmaBackend.status || 'offline',
+                  url: serviceUrls.gemmaBackend,
+                  icon: (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                    </svg>
+                  )
+                },
+                {
+                  name: 'SUT Discovery',
+                  status: services?.discoveryService.status || 'offline',
+                  url: serviceUrls.discoveryService,
+                  icon: (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  )
+                },
+                {
+                  name: 'Preset Manager',
+                  status: services?.presetManager.status || 'offline',
+                  url: serviceUrls.presetManager,
+                  icon: (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                    </svg>
+                  )
+                },
+                {
+                  name: 'Queue Service',
+                  status: services?.queueService.status || 'offline',
+                  url: serviceUrls.queueService,
+                  icon: (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    </svg>
+                  )
+                },
               ].map((service) => (
                 <div
                   key={service.name}
-                  className="flex items-center justify-between p-2 bg-gray-800/50 rounded"
+                  className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg"
                 >
-                  <div className="flex items-center gap-2">
-                    <StatusDot status={service.status === 'online' ? 'online' : 'offline'} />
-                    <span className="text-sm text-gray-200">{service.name}</span>
+                  <div className="flex items-center gap-3">
+                    <div className={`p-1.5 rounded ${service.status === 'online' ? 'bg-emerald-900/50 text-emerald-400' : 'bg-gray-700 text-gray-500'}`}>
+                      {service.icon}
+                    </div>
+                    <div>
+                      <span className="text-sm font-medium text-gray-200 block">{service.name}</span>
+                      <span className="text-xs text-gray-500 font-mono">{service.url}</span>
+                    </div>
                   </div>
-                  <span className="text-xs text-gray-500 font-mono">{service.url}</span>
+                  <StatusDot status={service.status === 'online' ? 'online' : 'offline'} />
                 </div>
               ))}
             </div>
@@ -267,10 +308,10 @@ export function Settings() {
           {/* Service URLs */}
           <SettingsSection
             title="Service URLs"
-            description="Configure endpoints for Gemma services"
+            description="Configure endpoints for Raptor X services"
           >
             <SettingInput
-              label="Gemma Backend"
+              label="Raptor X Backend"
               value={serviceUrls.gemmaBackend}
               onChange={(v) => setServiceUrls({ ...serviceUrls, gemmaBackend: v })}
               placeholder="http://localhost:5000"

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useGames, useDevices } from '../hooks';
-import { GameCard } from '../components';
+import { GameCard, PresetMatrix, PreflightChecks } from '../components';
+import type { QualityLevel, Resolution, PresetAvailability } from '../components';
 import { startRun } from '../api';
-import { getSutInstalledGames, type InstalledGameInfo, type SutInstalledGamesResponse } from '../api/presetManager';
-import type { GameConfig } from '../types';
+import { getSutInstalledGames, getPresetMatrix, type InstalledGameInfo, type SutInstalledGamesResponse } from '../api/presetManager';
+import type { GameConfig, SUT } from '../types';
 
 export function Games() {
   const { gamesList, loading, reload } = useGames();
@@ -12,11 +13,14 @@ export function Games() {
   const [selectedGame, setSelectedGame] = useState<GameConfig | null>(null);
   const [showRunModal, setShowRunModal] = useState(false);
 
-  // SUT selection for installed games view
+  // SUT selection for both views
   const [selectedSutIp, setSelectedSutIp] = useState<string>('');
   const [installedGames, setInstalledGames] = useState<SutInstalledGamesResponse | null>(null);
   const [loadingInstalled, setLoadingInstalled] = useState(false);
   const [viewMode, setViewMode] = useState<'configs' | 'installed'>('configs');
+
+  // Separate SUT selection for configs view (to check availability)
+  const [configsSutIp, setConfigsSutIp] = useState<string>('');
 
   const handleReload = async () => {
     setReloading(true);
@@ -145,6 +149,36 @@ export function Games() {
         </div>
       )}
 
+      {/* SUT Selector for Configs view (to check installation) */}
+      {viewMode === 'configs' && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex-1 min-w-[200px]">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Check installation on SUT (optional)
+              </label>
+              <select
+                value={configsSutIp}
+                onChange={(e) => setConfigsSutIp(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              >
+                <option value="">All configs (no SUT check)</option>
+                {onlineDevices.map((device) => (
+                  <option key={device.device_id} value={device.ip}>
+                    {device.hostname || device.ip} ({device.ip})
+                  </option>
+                ))}
+              </select>
+            </div>
+            {configsSutIp && (
+              <div className="text-sm text-gray-500">
+                Showing installation status for each game on {configsSutIp}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Content based on view mode */}
       {viewMode === 'configs' ? (
         // Game Configs View
@@ -175,6 +209,7 @@ export function Games() {
                 onRun={handleRunGame}
                 isSelected={selectedGame?.name === game.name}
                 disabled={onlineDevices.length === 0}
+                sutIp={configsSutIp}
               />
             ))}
           </div>
@@ -215,7 +250,6 @@ export function Games() {
               <InstalledGameCard
                 key={game.steam_app_id || game.name}
                 game={game}
-                sutIp={selectedSutIp}
                 onRun={(presetShortName) => {
                   // Find matching game config and open run modal
                   const config = gamesList.find(g =>
@@ -252,11 +286,10 @@ export function Games() {
 // Component for displaying installed games with rich info
 interface InstalledGameCardProps {
   game: InstalledGameInfo;
-  sutIp: string;
   onRun: (presetShortName: string) => void;
 }
 
-function InstalledGameCard({ game, sutIp, onRun }: InstalledGameCardProps) {
+function InstalledGameCard({ game, onRun }: InstalledGameCardProps) {
   return (
     <div className={`bg-white rounded-lg border p-4 ${
       game.has_presets ? 'border-green-300 ring-1 ring-green-100' : 'border-gray-200'
@@ -325,7 +358,7 @@ function InstalledGameCard({ game, sutIp, onRun }: InstalledGameCardProps) {
 
 interface RunGameModalProps {
   game: GameConfig;
-  devices: Array<{ device_id: string; ip: string; hostname: string }>;
+  devices: SUT[];
   preSelectedSut?: string;
   onClose: () => void;
 }
@@ -337,6 +370,20 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
   const [error, setError] = useState<string | null>(null);
   const [installedInfo, setInstalledInfo] = useState<InstalledGameInfo | null>(null);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
+
+  // Preset matrix state
+  const [selectedQuality, setSelectedQuality] = useState<QualityLevel | null>(null);
+  const [selectedResolution, setSelectedResolution] = useState<Resolution | null>(null);
+  const [presetMatrix, setPresetMatrix] = useState<PresetAvailability>({});
+  const [loadingMatrix, setLoadingMatrix] = useState(false);
+  const [preflightPassed, setPreflightPassed] = useState(false);
+  const [manualPresetOverride, setManualPresetOverride] = useState(false);
+
+  // Get the selected SUT object
+  const selectedSut = devices.find(d => d.ip === selectedDevice) || null;
+
+  // Derive game slug from game name (simple conversion)
+  const gameSlug = installedInfo?.preset_short_name || game.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 
   // Check game availability when device is selected
   useEffect(() => {
@@ -356,13 +403,33 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
           return;
         }
 
-        // Find the game in installed games list
-        const gameNameLower = game.name.toLowerCase();
-        const found = result.games.find(g =>
-          g.name.toLowerCase().includes(gameNameLower) ||
-          gameNameLower.includes(g.name.toLowerCase()) ||
-          (g.preset_short_name && gameNameLower.includes(g.preset_short_name.replace(/-/g, ' ')))
-        );
+        // Find the game in installed games list with improved matching
+        const normalizeForMatch = (str: string) =>
+          str.toLowerCase()
+            .replace(/['']/g, '')  // Remove apostrophes
+            .replace(/[^a-z0-9]/g, ' ')  // Replace special chars with spaces
+            .replace(/\s+/g, ' ')  // Normalize spaces
+            .trim();
+
+        const gameNameNorm = normalizeForMatch(game.name);
+        const gameDisplayNorm = normalizeForMatch(game.display_name || game.name);
+
+        const found = result.games.find(g => {
+          const installedNameNorm = normalizeForMatch(g.name);
+          const presetSlug = g.preset_short_name?.replace(/-/g, ' ') || '';
+
+          // Match by: name contains, preset slug matches, or display name
+          return (
+            installedNameNorm.includes(gameNameNorm) ||
+            gameNameNorm.includes(installedNameNorm) ||
+            installedNameNorm.includes(gameDisplayNorm) ||
+            gameDisplayNorm.includes(installedNameNorm) ||
+            (g.preset_short_name && (
+              presetSlug.includes(gameNameNorm) ||
+              gameNameNorm.includes(presetSlug)
+            ))
+          );
+        });
 
         if (found) {
           setInstalledInfo(found);
@@ -384,13 +451,62 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
     checkAvailability();
   }, [selectedDevice, game.name]);
 
+  // Fetch preset matrix when game is found
+  useEffect(() => {
+    if (!installedInfo?.preset_short_name) {
+      setPresetMatrix({});
+      return;
+    }
+
+    const fetchMatrix = async () => {
+      setLoadingMatrix(true);
+      try {
+        const matrix = await getPresetMatrix(installedInfo.preset_short_name!);
+        // Cast string[] to Resolution[] since API returns string format
+        const presets: PresetAvailability = {};
+        for (const [quality, resolutions] of Object.entries(matrix.available_presets)) {
+          presets[quality] = resolutions as Resolution[];
+        }
+        setPresetMatrix(presets);
+        // Set defaults if available
+        if (matrix.default_quality && matrix.default_resolution) {
+          setSelectedQuality(matrix.default_quality as QualityLevel);
+          setSelectedResolution(matrix.default_resolution as Resolution);
+        }
+      } catch (err) {
+        console.error('Failed to fetch preset matrix:', err);
+        // Fall back to simple structure from installed info
+        const levels = installedInfo.available_preset_levels;
+        const matrix: PresetAvailability = {};
+        for (const level of levels) {
+          const [quality, resolution] = level.split('-');
+          if (quality && resolution) {
+            if (!matrix[quality]) matrix[quality] = [];
+            matrix[quality].push(resolution as Resolution);
+          }
+        }
+        setPresetMatrix(matrix);
+        // Default to high-1080p if available
+        if (matrix['high']?.includes('1080p')) {
+          setSelectedQuality('high');
+          setSelectedResolution('1080p');
+        }
+      } finally {
+        setLoadingMatrix(false);
+      }
+    };
+
+    fetchMatrix();
+  }, [installedInfo?.preset_short_name]);
+
   const handleStart = async () => {
-    if (!selectedDevice || !installedInfo?.has_presets) return;
+    if (!selectedDevice || !installedInfo?.has_presets || !selectedQuality || !selectedResolution) return;
 
     setStarting(true);
     setError(null);
 
     try {
+      // Pass the selected preset level to startRun
       await startRun(selectedDevice, game.name, iterations);
       onClose();
     } catch (err) {
@@ -400,14 +516,22 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
     }
   };
 
-  const canStart = selectedDevice && installedInfo && installedInfo.has_presets && !starting && !checkingAvailability;
+  // Allow starting if preflight passed OR if user acknowledged manual preset override
+  const canStart = selectedDevice && installedInfo?.has_presets && selectedQuality && selectedResolution && (preflightPassed || manualPresetOverride) && !starting && !checkingAvailability;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4">
-        <h2 className="text-xl font-bold text-gray-900 mb-4">
-          Run {game.display_name || game.name}
-        </h2>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold text-gray-900">
+            Run {game.display_name || game.name}
+          </h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
 
         {error && (
           <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">
@@ -415,120 +539,152 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
           </div>
         )}
 
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Select SUT
-            </label>
-            <select
-              value={selectedDevice}
-              onChange={(e) => setSelectedDevice(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2"
-            >
-              <option value="">Choose a device...</option>
-              {devices.map((device) => (
-                <option key={device.device_id} value={device.ip}>
-                  {device.hostname || device.ip}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left Column - Configuration */}
+          <div className="space-y-4">
+            {/* SUT Selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Select SUT
+              </label>
+              <select
+                value={selectedDevice}
+                onChange={(e) => setSelectedDevice(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              >
+                <option value="">Choose a device...</option>
+                {devices.map((device) => (
+                  <option key={device.device_id} value={device.ip}>
+                    {device.hostname || device.ip} ({device.ip})
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          {/* Game Info from SUT */}
-          {selectedDevice && (
-            <div className={`p-4 rounded-lg text-sm ${
-              checkingAvailability
-                ? 'bg-gray-50'
-                : installedInfo?.has_presets
-                ? 'bg-green-50 border border-green-200'
-                : installedInfo
-                ? 'bg-yellow-50 border border-yellow-200'
-                : 'bg-red-50 border border-red-200'
-            }`}>
-              {checkingAvailability ? (
-                <div className="flex items-center gap-2 text-gray-600">
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  Checking game availability...
-                </div>
-              ) : installedInfo ? (
-                <div className="space-y-2">
+            {/* Game Info from SUT */}
+            {selectedDevice && (
+              <div className={`p-3 rounded-lg text-sm ${
+                checkingAvailability
+                  ? 'bg-gray-50'
+                  : installedInfo?.has_presets
+                  ? 'bg-green-50 border border-green-200'
+                  : installedInfo
+                  ? 'bg-yellow-50 border border-yellow-200'
+                  : 'bg-red-50 border border-red-200'
+              }`}>
+                {checkingAvailability ? (
+                  <div className="flex items-center gap-2 text-gray-600">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Checking game availability...
+                  </div>
+                ) : installedInfo ? (
                   <div className="flex items-center gap-2">
                     {installedInfo.has_presets ? (
-                      <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-5 w-5 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                     ) : (
-                      <svg className="h-5 w-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-5 w-5 text-yellow-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                       </svg>
                     )}
-                    <span className={`font-medium ${installedInfo.has_presets ? 'text-green-700' : 'text-yellow-700'}`}>
-                      {installedInfo.name}
+                    <span className={installedInfo.has_presets ? 'text-green-700' : 'text-yellow-700'}>
+                      {installedInfo.name} — {installedInfo.has_presets ? 'Ready' : 'No presets'}
                     </span>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <span className="text-gray-500">Steam App ID:</span>{' '}
-                      <span className="font-mono">{installedInfo.steam_app_id || 'N/A'}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Matched via:</span>{' '}
-                      <span>{installedInfo.matched_by || 'N/A'}</span>
-                    </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-red-700">
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Game not installed on this SUT
                   </div>
+                )}
+              </div>
+            )}
 
-                  <div className="text-xs">
-                    <span className="text-gray-500">Install path:</span>
-                    <p className="font-mono truncate" title={installedInfo.install_path || undefined}>
-                      {installedInfo.install_path || 'Unknown'}
-                    </p>
+            {/* Preset Matrix */}
+            {installedInfo?.has_presets && (
+              <div>
+                {loadingMatrix ? (
+                  <div className="p-4 bg-gray-50 rounded-lg text-center text-gray-500">
+                    Loading preset options...
                   </div>
+                ) : (
+                  <PresetMatrix
+                    gameName={game.display_name || game.name}
+                    availablePresets={presetMatrix}
+                    selectedQuality={selectedQuality}
+                    selectedResolution={selectedResolution}
+                    onSelect={(quality, resolution) => {
+                      setSelectedQuality(quality);
+                      setSelectedResolution(resolution);
+                      setManualPresetOverride(false); // Reset override when selection changes
+                    }}
+                    disabled={!installedInfo?.has_presets}
+                  />
+                )}
+              </div>
+            )}
 
-                  {installedInfo.has_presets && (
-                    <div className="pt-2 border-t border-green-200">
-                      <span className="text-xs text-green-600 font-medium">Available Presets:</span>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {installedInfo.available_preset_levels.map((level) => (
-                          <span key={level} className="px-2 py-0.5 text-xs bg-green-200 text-green-800 rounded">
-                            {level}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-red-700">
-                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                  Game not installed on this SUT
-                </div>
-              )}
+            {/* Iterations */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Iterations
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={iterations}
+                onChange={(e) => setIterations(parseInt(e.target.value) || 1)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              />
             </div>
-          )}
+          </div>
 
+          {/* Right Column - Preflight Checks */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Iterations
-            </label>
-            <input
-              type="number"
-              min="1"
-              max="100"
-              value={iterations}
-              onChange={(e) => setIterations(parseInt(e.target.value) || 1)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2"
-              disabled={!canStart}
+            <PreflightChecks
+              sut={selectedSut}
+              gameName={game.display_name || game.name}
+              gameSlug={gameSlug}
+              quality={selectedQuality}
+              resolution={selectedResolution}
+              onAllChecksPassed={setPreflightPassed}
+              autoRun={true}
             />
           </div>
         </div>
 
-        <div className="flex gap-3 mt-6">
+        {/* Manual Override Option - shown when preflight fails but selections are made */}
+        {!preflightPassed && selectedDevice && selectedQuality && selectedResolution && (
+          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={manualPresetOverride}
+                onChange={(e) => setManualPresetOverride(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-yellow-600 focus:ring-yellow-500"
+              />
+              <div>
+                <span className="text-sm font-medium text-yellow-800">
+                  I've configured the preset manually
+                </span>
+                <p className="text-xs text-yellow-600 mt-0.5">
+                  Check this to override preflight failures and start automation anyway.
+                  Make sure the game settings are configured correctly on the SUT.
+                </p>
+              </div>
+            </label>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex gap-3 mt-6 pt-4 border-t border-gray-200">
           <button
             onClick={onClose}
             className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50"
@@ -540,7 +696,7 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
             disabled={!canStart}
             className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg font-medium hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
           >
-            {starting ? 'Starting...' : checkingAvailability ? 'Checking...' : 'Start Automation'}
+            {starting ? 'Starting...' : `Start Automation (${selectedQuality || '?'} @ ${selectedResolution || '?'})`}
           </button>
         </div>
       </div>

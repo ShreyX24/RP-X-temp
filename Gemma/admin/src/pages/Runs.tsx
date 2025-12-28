@@ -1,18 +1,39 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useRuns } from '../hooks';
 import { RunCard, LogViewer } from '../components';
-import type { AutomationRun } from '../types';
+import type { AutomationRun, LogEntry } from '../types';
 
 export function Runs() {
   const { activeRunsList, history, loading, stop } = useRuns();
   const [selectedRun, setSelectedRun] = useState<AutomationRun | null>(null);
   const [showLogs, setShowLogs] = useState(false);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+
+  const fetchLogs = useCallback(async (runId: string) => {
+    setLogsLoading(true);
+    try {
+      const response = await fetch(`/api/runs/${runId}/logs`);
+      if (response.ok) {
+        const data = await response.json();
+        setLogs(data.logs || []);
+      } else {
+        setLogs([]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch logs:', error);
+      setLogs([]);
+    } finally {
+      setLogsLoading(false);
+    }
+  }, []);
 
   const handleViewLogs = (runId: string) => {
     const run = [...activeRunsList, ...history].find(r => r.run_id === runId);
     if (run) {
       setSelectedRun(run);
       setShowLogs(true);
+      fetchLogs(runId);
     }
   };
 
@@ -23,40 +44,40 @@ export function Runs() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-4 lg:p-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Automation Runs</h1>
-        <p className="text-gray-500">Monitor active and past automation runs</p>
+        <h1 className="text-2xl font-bold text-text-primary">Automation Runs</h1>
+        <p className="text-text-muted">Monitor active and past automation runs</p>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <p className="text-sm text-gray-500">Active Runs</p>
-          <p className="text-2xl font-bold text-blue-600">{stats.active}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="card p-4">
+          <p className="text-sm text-text-muted">Active Runs</p>
+          <p className="text-2xl font-bold text-primary">{stats.active}</p>
         </div>
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <p className="text-sm text-gray-500">Completed</p>
-          <p className="text-2xl font-bold text-green-600">{stats.completed}</p>
+        <div className="card p-4">
+          <p className="text-sm text-text-muted">Completed</p>
+          <p className="text-2xl font-bold text-success">{stats.completed}</p>
         </div>
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <p className="text-sm text-gray-500">Failed</p>
-          <p className="text-2xl font-bold text-red-600">{stats.failed}</p>
+        <div className="card p-4">
+          <p className="text-sm text-text-muted">Failed</p>
+          <p className="text-2xl font-bold text-danger">{stats.failed}</p>
         </div>
       </div>
 
       {/* Active Runs */}
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+        <h2 className="text-lg font-semibold text-text-primary mb-4">
           Active Runs ({activeRunsList.length})
         </h2>
         {activeRunsList.length === 0 ? (
-          <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-500">
+          <div className="card p-8 text-center text-text-muted">
             No active runs
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {activeRunsList.map((run) => (
               <RunCard
                 key={run.run_id}
@@ -71,109 +92,123 @@ export function Runs() {
 
       {/* Run History */}
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+        <h2 className="text-lg font-semibold text-text-primary mb-4">
           History ({history.length})
         </h2>
         {loading ? (
           <div className="space-y-4">
             {[...Array(3)].map((_, i) => (
-              <div key={i} className="bg-white rounded-lg border border-gray-200 p-4 animate-pulse">
-                <div className="h-4 bg-gray-200 rounded w-1/3 mb-2"></div>
-                <div className="h-3 bg-gray-200 rounded w-1/4"></div>
+              <div key={i} className="card p-4 animate-pulse">
+                <div className="h-4 bg-surface-elevated rounded w-1/3 mb-2"></div>
+                <div className="h-3 bg-surface-elevated rounded w-1/4"></div>
               </div>
             ))}
           </div>
         ) : history.length === 0 ? (
-          <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-500">
+          <div className="card p-8 text-center text-text-muted">
             No run history
           </div>
         ) : (
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Game
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    SUT
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Started
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {history.slice(0, 20).map((run) => (
-                  <tr key={run.run_id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {run.game_name}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {run.sut_ip}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span
-                        className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
-                          run.status === 'completed'
-                            ? 'bg-green-100 text-green-700'
-                            : run.status === 'failed'
-                            ? 'bg-red-100 text-red-700'
-                            : 'bg-gray-100 text-gray-700'
-                        }`}
-                      >
-                        {run.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {run.started_at
-                        ? new Date(run.started_at).toLocaleString()
-                        : '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <button
-                        onClick={() => handleViewLogs(run.run_id)}
-                        className="text-blue-500 hover:text-blue-700"
-                      >
-                        View Logs
-                      </button>
-                    </td>
+          <div className="card overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-border">
+                <thead className="bg-surface-elevated">
+                  <tr>
+                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
+                      Game
+                    </th>
+                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden sm:table-cell">
+                      SUT
+                    </th>
+                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider hidden md:table-cell">
+                      Started
+                    </th>
+                    <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
+                      Actions
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {history.slice(0, 20).map((run) => (
+                    <tr key={run.run_id} className="hover:bg-surface-hover transition-colors">
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-text-primary">
+                        {run.game_name}
+                      </td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-text-muted hidden sm:table-cell">
+                        {run.sut_ip}
+                      </td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
+                        <span
+                          className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
+                            run.status === 'completed'
+                              ? 'bg-success/20 text-success'
+                              : run.status === 'failed'
+                              ? 'bg-danger/20 text-danger'
+                              : 'bg-surface-elevated text-text-muted'
+                          }`}
+                        >
+                          {run.status}
+                        </span>
+                      </td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-text-muted hidden md:table-cell">
+                        {run.started_at
+                          ? new Date(run.started_at).toLocaleString()
+                          : '-'}
+                      </td>
+                      <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm">
+                        <button
+                          onClick={() => handleViewLogs(run.run_id)}
+                          className="text-primary hover:text-primary/80 transition-colors"
+                        >
+                          View Logs
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
 
-      {/* Log Modal */}
+      {/* Log Modal - Full screen on mobile, large on desktop */}
       {showLogs && selectedRun && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-2 sm:p-4">
+          <div className="bg-surface rounded-xl p-4 sm:p-6 w-full max-w-7xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col border border-border shadow-2xl">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-gray-900">
-                Logs - {selectedRun.game_name}
-              </h2>
+              <div>
+                <h2 className="text-lg sm:text-xl font-bold text-text-primary">
+                  Run Logs
+                </h2>
+                <p className="text-sm text-text-muted">
+                  {selectedRun.game_name} on {selectedRun.sut_ip}
+                </p>
+              </div>
               <button
                 onClick={() => {
                   setShowLogs(false);
                   setSelectedRun(null);
+                  setLogs([]);
                 }}
-                className="text-gray-400 hover:text-gray-600"
+                className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
               >
                 <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
-            <div className="flex-1 overflow-hidden">
-              <LogViewer logs={selectedRun.logs || []} maxHeight="60vh" />
+            <div className="flex-1 overflow-hidden min-h-0">
+              {logsLoading ? (
+                <div className="rounded-lg bg-background p-4 font-mono text-sm text-text-muted flex items-center justify-center h-full">
+                  <span className="animate-pulse">Loading logs...</span>
+                </div>
+              ) : (
+                <LogViewer logs={logs} maxHeight="calc(90vh - 120px)" />
+              )}
             </div>
           </div>
         </div>

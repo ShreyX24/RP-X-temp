@@ -3,7 +3,7 @@
  * Shows all services, metrics, and quick actions in a compact layout
  */
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useSystemStatus, useDevices, useGames, useRuns, useQueueStats, useServiceHealth } from '../hooks';
 import {
@@ -11,11 +11,12 @@ import {
   MetricCard,
   MetricGrid,
   QueueDepthChart,
-  JobHistoryTable,
   StatusDot,
   RunCard,
+  RecentRunsTable,
 } from '../components';
-import type { SUT, GameConfig } from '../types';
+import type { SUT, GameConfig, SUTSystemInfo } from '../types';
+import { formatCpuDisplay, formatGpuDisplay, formatRamDisplay } from '../utils/cpuCodenames';
 
 // Compact SUT Card for dashboard
 function CompactSUTCard({
@@ -31,28 +32,28 @@ function CompactSUTCard({
     <button
       onClick={onClick}
       className={`
-        w-full p-2 rounded-lg border text-left transition-all
+        w-full p-2.5 rounded-lg border text-left transition-all
         ${isSelected
-          ? 'bg-blue-900/30 border-blue-500'
-          : 'bg-gray-800/50 border-gray-700 hover:border-gray-600'
+          ? 'bg-primary/20 border-primary glow'
+          : 'bg-surface border-border hover:border-border-hover hover:bg-surface-hover'
         }
       `}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <StatusDot status={sut.status === 'online' ? 'online' : 'offline'} />
-          <span className="text-sm font-medium text-gray-200 truncate max-w-[100px]">
+          <span className="text-sm font-medium text-text-primary truncate max-w-[100px]">
             {sut.hostname || sut.ip}
           </span>
         </div>
-        <div className="flex items-center gap-2 text-xs text-gray-500">
+        <div className="flex items-center gap-2 text-xs text-text-muted">
           {sut.current_task && (
-            <span className="text-amber-400" title="Running task">
+            <span className="text-warning" title="Running task">
               ...
             </span>
           )}
           {sut.success_rate !== undefined && sut.success_rate > 0 && (
-            <span className="tabular-nums">
+            <span className="font-numbers tabular-nums">
               {Math.round(sut.success_rate * 100)}%
             </span>
           )}
@@ -75,9 +76,9 @@ function ActionButton({
   variant?: 'default' | 'primary' | 'danger';
 }) {
   const variants = {
-    default: 'bg-gray-700 hover:bg-gray-600 text-gray-200',
-    primary: 'bg-blue-600 hover:bg-blue-500 text-white',
-    danger: 'bg-red-600 hover:bg-red-500 text-white',
+    default: 'bg-surface-elevated hover:bg-surface-hover text-text-secondary border border-border',
+    primary: 'bg-primary hover:bg-primary-dark text-white',
+    danger: 'bg-danger/80 hover:bg-danger text-white',
   };
 
   return (
@@ -85,7 +86,7 @@ function ActionButton({
       onClick={onClick}
       disabled={disabled}
       className={`
-        px-3 py-1.5 rounded text-sm font-medium transition-colors
+        px-3 py-1.5 rounded-lg text-sm font-medium transition-all
         ${variants[variant]}
         ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
       `}
@@ -100,17 +101,50 @@ export function Dashboard() {
   useSystemStatus();
   const { devices, onlineDevices } = useDevices();
   const { gamesList } = useGames();
-  const { activeRunsList, start, stop } = useRuns();
+  const { activeRunsList, history, start, stop } = useRuns();
 
   // New hooks for enhanced dashboard
-  const { stats: queueStats, jobs: queueJobs, depthHistory, isAvailable: queueAvailable } = useQueueStats();
+  const { stats: queueStats, depthHistory, isAvailable: queueAvailable } = useQueueStats();
   const { services } = useServiceHealth();
 
   // UI state
   const [selectedSut, setSelectedSut] = useState<SUT | null>(null);
   const [selectedGame, setSelectedGame] = useState<GameConfig | null>(null);
+  const [iterations, setIterations] = useState(1);
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sutSystemInfo, setSutSystemInfo] = useState<SUTSystemInfo | null>(null);
+  const [sutInfoLoading, setSutInfoLoading] = useState(false);
+
+  // Fetch SUT system info when a SUT is selected
+  const fetchSutSystemInfo = useCallback(async (sutIp: string) => {
+    setSutInfoLoading(true);
+    try {
+      const response = await fetch(`/api/sut/by-ip/${sutIp}/system_info`, {
+        signal: AbortSignal.timeout(10000),
+      });
+      if (response.ok) {
+        const result = await response.json();
+        setSutSystemInfo(result.data || null);
+      } else {
+        setSutSystemInfo(null);
+      }
+    } catch {
+      setSutSystemInfo(null);
+    } finally {
+      setSutInfoLoading(false);
+    }
+  }, []);
+
+  // Handle SUT selection
+  const handleSelectSut = useCallback((sut: SUT | null) => {
+    setSelectedSut(sut);
+    if (sut) {
+      fetchSutSystemInfo(sut.ip);
+    } else {
+      setSutSystemInfo(null);
+    }
+  }, [fetchSutSystemInfo]);
 
   // Handlers
   const handleStartRun = async () => {
@@ -120,9 +154,11 @@ export function Dashboard() {
     setError(null);
 
     try {
-      await start(selectedSut.ip, selectedGame.name, 1);
+      await start(selectedSut.ip, selectedGame.name, iterations);
       setSelectedSut(null);
       setSelectedGame(null);
+      setIterations(1);
+      setSutSystemInfo(null);  // Clear system info after starting
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start run');
     } finally {
@@ -137,158 +173,158 @@ export function Dashboard() {
   };
 
   return (
-    <div className="space-y-4 p-4 min-h-screen bg-gray-900 text-gray-100">
-      {/* Header Row */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-white">Gemma Control Center</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            to="/workflow"
-            className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium rounded transition-colors"
-          >
-            Workflow Builder
-          </Link>
-          <Link
-            to="/settings"
-            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-medium rounded transition-colors"
-          >
-            Settings
-          </Link>
-        </div>
-      </div>
-
+    <div className="flex flex-col h-[calc(100vh-56px)] p-4 bg-background text-text-primary overflow-hidden">
       {/* Service Health Bar */}
-      <ServiceHealthPanel services={services} />
+      <div className="flex-shrink-0 mb-4">
+        <ServiceHealthPanel services={services} />
+      </div>
 
       {/* Error Banner */}
       {error && (
-        <div className="flex items-center justify-between bg-red-900/30 border border-red-700/50 rounded-lg px-4 py-2">
-          <span className="text-red-300 text-sm">{error}</span>
+        <div className="flex items-center justify-between bg-danger/20 border border-danger/50 rounded-lg px-4 py-2 mb-4 flex-shrink-0">
+          <span className="text-danger text-sm">{error}</span>
           <button
             onClick={() => setError(null)}
-            className="text-red-400 hover:text-red-300 text-sm"
+            className="text-danger/70 hover:text-danger text-sm"
           >
             Dismiss
           </button>
         </div>
       )}
 
-      {/* Main Grid */}
-      <div className="grid grid-cols-12 gap-4">
-        {/* Left Panel (5 cols) - Metrics + SUTs */}
-        <div className="col-span-12 lg:col-span-5 space-y-4">
+      {/* Main Grid - Fills remaining space */}
+      <div className="grid grid-cols-12 gap-4 flex-1 min-h-0">
+        {/* Left Panel (5 cols) - Metrics + SUTs + Quick Start + Recent Jobs */}
+        <div className="col-span-12 lg:col-span-5 flex flex-col gap-4 min-h-0">
           {/* Metrics Grid */}
-          <MetricGrid columns={3} gap="sm">
-            <MetricCard
-              label="Online SUTs"
-              value={onlineDevices.length}
-              sublabel={`of ${devices.length} total`}
-              color={onlineDevices.length > 0 ? 'success' : 'default'}
-            />
-            <MetricCard
-              label="Active Runs"
-              value={activeRunsList.length}
-              color={activeRunsList.length > 0 ? 'info' : 'default'}
-            />
-            <MetricCard
-              label="Queue"
-              value={queueStats?.current_queue_size ?? '-'}
-              sublabel={queueAvailable ? 'items' : 'unavailable'}
-              color={
-                !queueAvailable ? 'error' :
-                (queueStats?.current_queue_size ?? 0) > 10 ? 'warning' : 'default'
-              }
-            />
-            <MetricCard
-              label="Games"
-              value={gamesList.length}
-            />
-            <MetricCard
-              label="Processed"
-              value={queueStats?.total_requests ?? 0}
-              sublabel="total jobs"
-            />
-            <MetricCard
-              label="Avg Time"
-              value={queueStats?.avg_processing_time
-                ? `${(queueStats.avg_processing_time).toFixed(1)}s`
-                : '-'
-              }
-              sublabel="per job"
-            />
-          </MetricGrid>
+          <div className="flex-shrink-0">
+            <MetricGrid columns={3} gap="sm">
+              <MetricCard
+                label="Online SUTs"
+                value={onlineDevices.length}
+                sublabel={`of ${devices.length} total`}
+                color={onlineDevices.length > 0 ? 'success' : 'default'}
+              />
+              <MetricCard
+                label="Active Runs"
+                value={activeRunsList.length}
+                color={activeRunsList.length > 0 ? 'info' : 'default'}
+              />
+              <MetricCard
+                label="Queue"
+                value={queueStats?.current_queue_size ?? '-'}
+                sublabel={queueAvailable ? 'items' : 'unavailable'}
+                color={
+                  !queueAvailable ? 'error' :
+                  (queueStats?.current_queue_size ?? 0) > 10 ? 'warning' : 'default'
+                }
+              />
+              <MetricCard
+                label="Games"
+                value={gamesList.length}
+              />
+              <MetricCard
+                label="Processed"
+                value={queueStats?.total_requests ?? 0}
+                sublabel="total jobs"
+              />
+              <MetricCard
+                label="Avg Time"
+                value={queueStats?.avg_processing_time
+                  ? `${(queueStats.avg_processing_time).toFixed(1)}s`
+                  : '-'
+                }
+                sublabel="per job"
+              />
+            </MetricGrid>
+          </div>
 
           {/* Online SUTs Grid */}
-          <div className="bg-gray-800/30 rounded-lg border border-gray-700 p-3">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium text-gray-300">
-                Online SUTs
-              </h3>
-              <Link
-                to="/devices"
-                className="text-xs text-blue-400 hover:text-blue-300"
-              >
+          <div className="card p-4 flex-shrink-0">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-text-secondary">Online SUTs</h3>
+              <Link to="/devices" className="text-xs text-primary hover:text-primary-dark transition-colors">
                 View All
               </Link>
             </div>
 
             {onlineDevices.length === 0 ? (
-              <div className="text-center py-6 text-gray-500 text-sm">
-                No online SUTs
-              </div>
+              <div className="text-center py-4 text-text-muted text-sm">No online SUTs</div>
             ) : (
-              <div className="grid grid-cols-2 gap-2 max-h-[200px] overflow-y-auto">
-                {onlineDevices.slice(0, 8).map((sut) => (
+              <div className="grid grid-cols-2 gap-2">
+                {onlineDevices.slice(0, 4).map((sut) => (
                   <CompactSUTCard
                     key={sut.device_id}
                     sut={sut}
                     isSelected={selectedSut?.device_id === sut.device_id}
-                    onClick={() => setSelectedSut(sut)}
+                    onClick={() => handleSelectSut(sut)}
                   />
                 ))}
               </div>
             )}
 
-            {onlineDevices.length > 8 && (
+            {onlineDevices.length > 4 && (
               <div className="text-center mt-2">
-                <Link
-                  to="/devices"
-                  className="text-xs text-gray-500 hover:text-gray-400"
-                >
-                  +{onlineDevices.length - 8} more
+                <Link to="/devices" className="text-xs text-text-muted hover:text-text-secondary transition-colors">
+                  +{onlineDevices.length - 4} more
                 </Link>
               </div>
             )}
           </div>
 
           {/* Quick Start Panel */}
-          <div className="bg-gray-800/30 rounded-lg border border-gray-700 p-3">
-            <h3 className="text-sm font-medium text-gray-300 mb-3">Quick Start</h3>
+          <div className="card p-4 flex-shrink-0">
+            <h3 className="text-sm font-semibold text-text-secondary mb-3">Quick Start</h3>
 
             <div className="space-y-3">
               {/* Selected SUT */}
-              <div className="flex items-center justify-between p-2 bg-gray-800/50 rounded text-sm">
-                <span className="text-gray-400">SUT:</span>
+              <div className="flex items-center justify-between p-2.5 bg-surface-elevated rounded-lg text-sm">
+                <span className="text-text-muted">SUT:</span>
                 {selectedSut ? (
                   <div className="flex items-center gap-2">
-                    <span className="text-gray-200">{selectedSut.hostname || selectedSut.ip}</span>
-                    <button
-                      onClick={() => setSelectedSut(null)}
-                      className="text-gray-500 hover:text-gray-400"
-                    >
-                      ×
-                    </button>
+                    <span className="text-text-primary font-medium">{selectedSut.hostname || selectedSut.ip}</span>
+                    <button onClick={() => handleSelectSut(null)} className="text-text-muted hover:text-text-secondary">×</button>
                   </div>
                 ) : (
-                  <span className="text-gray-500 italic">Select above</span>
+                  <span className="text-text-muted italic">Select above</span>
                 )}
               </div>
 
+              {/* SUT System Info - shown when SUT is selected */}
+              {selectedSut && (
+                <div className="p-3 bg-surface-elevated/50 rounded-lg border border-border text-xs">
+                  {sutInfoLoading ? (
+                    <div className="text-text-muted animate-pulse">Loading system info...</div>
+                  ) : sutSystemInfo ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-brand-cyan font-medium">{formatCpuDisplay(sutSystemInfo.cpu.brand_string)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-success">{formatGpuDisplay(sutSystemInfo.gpu.name)}</span>
+                        <span className="text-text-muted">•</span>
+                        <span className="text-primary">{formatRamDisplay(sutSystemInfo.ram.total_gb)}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-text-muted">
+                        <span className="font-numbers">{sutSystemInfo.screen.width}x{sutSystemInfo.screen.height}</span>
+                        <span>•</span>
+                        <span>{sutSystemInfo.os.name} {sutSystemInfo.os.build && `(${sutSystemInfo.os.build})`}</span>
+                      </div>
+                      {sutSystemInfo.bios?.name && (
+                        <div className="text-text-muted/70 text-[10px]">
+                          BIOS: {sutSystemInfo.bios.name} {sutSystemInfo.bios.version && `v${sutSystemInfo.bios.version}`}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-text-muted">System info unavailable</div>
+                  )}
+                </div>
+              )}
+
               {/* Game Selection */}
-              <div className="flex items-center justify-between p-2 bg-gray-800/50 rounded text-sm">
-                <span className="text-gray-400">Game:</span>
+              <div className="flex items-center justify-between p-2.5 bg-surface-elevated rounded-lg text-sm">
+                <span className="text-text-muted">Game:</span>
                 <select
                   value={selectedGame?.name || ''}
                   onChange={(e) => {
@@ -296,7 +332,7 @@ export function Dashboard() {
                     setSelectedGame(game || null);
                   }}
                   disabled={!selectedSut}
-                  className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-200 disabled:opacity-50"
+                  className="input text-sm py-1 px-2 max-w-[180px] disabled:opacity-50"
                 >
                   <option value="">Select game</option>
                   {gamesList.map((game) => (
@@ -307,84 +343,120 @@ export function Dashboard() {
                 </select>
               </div>
 
+              {/* Iterations Selection */}
+              <div className="flex items-center justify-between p-2.5 bg-surface-elevated rounded-lg text-sm">
+                <span className="text-text-muted">Iterations:</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIterations(Math.max(1, iterations - 1))}
+                    className="w-7 h-7 flex items-center justify-center bg-surface hover:bg-surface-hover border border-border rounded-lg text-text-secondary transition-colors"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={iterations}
+                    onChange={(e) => setIterations(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+                    className="w-12 text-center input py-1 font-numbers"
+                  />
+                  <button
+                    onClick={() => setIterations(Math.min(10, iterations + 1))}
+                    className="w-7 h-7 flex items-center justify-center bg-surface hover:bg-surface-hover border border-border rounded-lg text-text-secondary transition-colors"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
               {/* Start Button */}
               <button
                 onClick={handleStartRun}
                 disabled={!selectedSut || !selectedGame || isStarting}
                 className={`
-                  w-full py-2 rounded font-medium text-sm transition-colors
+                  w-full py-2.5 rounded-lg font-semibold text-sm transition-all
                   ${selectedSut && selectedGame
-                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                    : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                    ? 'bg-success hover:bg-success/80 text-white glow-success'
+                    : 'bg-surface-elevated text-text-muted cursor-not-allowed'
                   }
                 `}
               >
-                {isStarting ? 'Starting...' : 'Start Automation'}
+                {isStarting ? 'Starting...' : `Start Automation${iterations > 1 ? ` (${iterations}x)` : ''}`}
               </button>
+            </div>
+          </div>
+
+          {/* Recent Runs - Moved to left panel, fills remaining space */}
+          <div className="card p-4 flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center justify-between mb-3 flex-shrink-0">
+              <h3 className="text-sm font-semibold text-text-secondary">Recent Runs</h3>
+              <Link to="/runs" className="text-xs text-primary hover:text-primary-dark transition-colors">
+                View All
+              </Link>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <RecentRunsTable
+                runs={history}
+                maxRows={6}
+                onRerun={(sutIp, gameName, iterations) => {
+                  start(sutIp, gameName, iterations).catch(console.error);
+                }}
+              />
             </div>
           </div>
         </div>
 
-        {/* Right Panel (7 cols) - Charts + Tables */}
-        <div className="col-span-12 lg:col-span-7 space-y-4">
+        {/* Right Panel (7 cols) - Queue Depth + Active Runs + Actions */}
+        <div className="col-span-12 lg:col-span-7 flex flex-col gap-4 min-h-0">
           {/* Queue Depth Chart */}
-          {depthHistory.length > 0 && (
+          <div className="flex-shrink-0">
             <QueueDepthChart
               data={depthHistory}
-              height={180}
+              height={140}
             />
-          )}
+          </div>
 
-          {/* Active Runs */}
-          {activeRunsList.length > 0 && (
-            <div className="bg-gray-800/30 rounded-lg border border-gray-700 p-3">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-medium text-gray-300">
-                  Active Runs ({activeRunsList.length})
-                </h3>
+          {/* Active Runs - Fills remaining space */}
+          <div className="card p-4 flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center justify-between mb-3 flex-shrink-0">
+              <h3 className="text-sm font-semibold text-text-secondary">
+                Active Runs <span className="font-numbers text-primary">({activeRunsList.length})</span>
+              </h3>
+              {activeRunsList.length > 0 && (
                 <ActionButton
                   label="Stop All"
                   variant="danger"
                   onClick={handleStopAll}
                 />
-              </div>
-
-              <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                {activeRunsList.map((run) => (
-                  <RunCard
-                    key={run.run_id}
-                    run={run}
-                    onStop={(id) => stop(id).catch(console.error)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Job History */}
-          <div className="bg-gray-800/30 rounded-lg border border-gray-700 p-3">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium text-gray-300">
-                Recent Jobs
-              </h3>
-              <Link
-                to="/queue"
-                className="text-xs text-blue-400 hover:text-blue-300"
-              >
-                View All
-              </Link>
+              )}
             </div>
 
-            <JobHistoryTable jobs={queueJobs} maxRows={8} />
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              {activeRunsList.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-text-muted text-sm">
+                  No active runs
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {activeRunsList.map((run) => (
+                    <RunCard
+                      key={run.run_id}
+                      run={run}
+                      onStop={(id) => stop(id).catch(console.error)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Quick Actions Bar */}
-          <div className="flex items-center gap-2 p-3 bg-gray-800/30 rounded-lg border border-gray-700">
-            <span className="text-xs text-gray-500 mr-2">Actions:</span>
+          <div className="flex items-center gap-3 p-4 card flex-shrink-0">
+            <span className="text-xs text-text-muted mr-2">Actions:</span>
             <ActionButton
               label="Scan SUTs"
               onClick={() => {
-                // Trigger discovery scan
                 fetch('/api/discovery/scan', { method: 'POST' });
               }}
             />
@@ -396,13 +468,13 @@ export function Dashboard() {
             />
             <Link
               to="/queue"
-              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-medium rounded transition-colors"
+              className="btn btn-secondary text-sm"
             >
               Queue Dashboard
             </Link>
             <Link
               to="/runs"
-              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-medium rounded transition-colors"
+              className="btn btn-secondary text-sm"
             >
               Run History
             </Link>

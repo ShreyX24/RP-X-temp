@@ -108,26 +108,24 @@ export function PresetMatrix({
       </div>
 
       {/* Legend */}
-      <div className="mb-4 flex flex-wrap gap-4 text-xs">
-        <div className="flex items-center gap-1.5">
-          <div className="h-3 w-3 rounded border-2 border-green-500 bg-green-100" />
+      <div className="mb-3 flex flex-wrap gap-3 text-xs text-gray-400">
+        <div className="flex items-center gap-1">
+          <div className="h-2 w-2 rounded-[2px] border border-green-500 bg-green-500/30" />
           <span>Available</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <div className="h-3 w-3 rounded border border-dashed border-gray-300 bg-gray-50" />
+        <div className="flex items-center gap-1">
+          <div className="h-2 w-2 rounded-[2px] border border-dashed border-gray-500" />
           <span>Placeholder</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <div className="h-3 w-3 rounded bg-red-100">
-            <div className="flex h-full items-center justify-center text-red-400">×</div>
-          </div>
+        <div className="flex items-center gap-1">
+          <div className="h-2 w-2 rounded-[2px] bg-red-500/30 border border-red-500" />
           <span>Exceeds SUT</span>
         </div>
       </div>
 
       {/* Matrix Grid */}
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[400px]">
+      <div>
+        <table className="w-full">
           <thead>
             <tr>
               <th className="pb-2 pr-2 text-left text-xs font-medium text-gray-500">Quality</th>
@@ -155,7 +153,7 @@ export function PresetMatrix({
                   const selected = isSelected(quality, resolution);
                   const isClickable = state === 'available' && !disabled;
 
-                  let cellClass = 'h-10 w-full rounded transition-all ';
+                  let cellClass = 'h-7 w-full rounded transition-all ';
 
                   if (selected) {
                     cellClass += QUALITY_COLORS[quality].selected + ' ring-2 ring-offset-1 ring-blue-400';
