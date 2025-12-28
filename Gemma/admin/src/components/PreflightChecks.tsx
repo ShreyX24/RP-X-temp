@@ -3,7 +3,7 @@
  * Validation checklist before starting automation
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { SUT } from '../types';
 import type { QualityLevel, Resolution } from './PresetMatrix';
 
@@ -60,6 +60,27 @@ export function PreflightChecks({
   );
   const [isRunning, setIsRunning] = useState(false);
 
+  // Use refs to avoid infinite loops from callback dependencies
+  const onAllChecksPassedRef = useRef(onAllChecksPassed);
+  const isRunningRef = useRef(false);
+  const qualityRef = useRef(quality);
+  const resolutionRef = useRef(resolution);
+  const gameSlugRef = useRef(gameSlug);
+
+  // Keep refs updated
+  useEffect(() => {
+    onAllChecksPassedRef.current = onAllChecksPassed;
+  }, [onAllChecksPassed]);
+
+  useEffect(() => {
+    qualityRef.current = quality;
+    resolutionRef.current = resolution;
+  }, [quality, resolution]);
+
+  useEffect(() => {
+    gameSlugRef.current = gameSlug;
+  }, [gameSlug]);
+
   const updateCheck = useCallback((id: string, updates: Partial<PreflightCheck>) => {
     setChecks((prev) =>
       prev.map((check) => (check.id === id ? { ...check, ...updates } : check))
@@ -67,6 +88,9 @@ export function PreflightChecks({
   }, []);
 
   const runChecks = useCallback(async () => {
+    // Prevent concurrent runs
+    if (isRunningRef.current) return;
+    isRunningRef.current = true;
     setIsRunning(true);
 
     // Reset all checks to pending
@@ -100,13 +124,14 @@ export function PreflightChecks({
     }
     updateCheck('sut_online', { status: 'passed', message: 'SUT is responding' });
 
-    // Check 3: Game selected
+    // Check 3: Game selected - use ref for current gameSlug
     updateCheck('game_selected', { status: 'checking' });
     await delay(200);
-    if (!gameName || !gameSlug) {
+    const currentGameSlug = gameSlugRef.current;
+    if (!gameName || !currentGameSlug) {
       updateCheck('game_selected', { status: 'failed', message: 'No game selected' });
       setIsRunning(false);
-      onAllChecksPassed?.(false);
+      onAllChecksPassedRef.current?.(false);
       return;
     }
     updateCheck('game_selected', { status: 'passed', message: gameName });
@@ -121,7 +146,7 @@ export function PreflightChecks({
       if (response.ok) {
         const data = await response.json();
         const installedGame = data.games?.find(
-          (g: { preset_short_name: string | null }) => g.preset_short_name === gameSlug
+          (g: { preset_short_name: string | null }) => g.preset_short_name === currentGameSlug
         );
         if (installedGame) {
           updateCheck('game_installed', {
@@ -148,21 +173,23 @@ export function PreflightChecks({
       });
     }
 
-    // Check 5: Preset selected
+    // Check 5: Preset selected - use refs for current values
     updateCheck('preset_selected', { status: 'checking' });
     await delay(200);
-    if (!quality || !resolution) {
+    const currentQuality = qualityRef.current;
+    const currentResolution = resolutionRef.current;
+    if (!currentQuality || !currentResolution) {
       updateCheck('preset_selected', {
         status: 'failed',
         message: 'Select quality and resolution',
       });
       setIsRunning(false);
-      onAllChecksPassed?.(false);
+      onAllChecksPassedRef.current?.(false);
       return;
     }
     updateCheck('preset_selected', {
       status: 'passed',
-      message: `${quality} @ ${resolution}`,
+      message: `${currentQuality} @ ${currentResolution}`,
     });
 
     // Check 6: Preset available
@@ -170,19 +197,20 @@ export function PreflightChecks({
     await delay(300);
     try {
       const response = await fetch(
-        `http://localhost:5002/api/presets/${encodeURIComponent(gameSlug)}/${quality}/${resolution}/metadata`
+        `http://localhost:5002/api/presets/${encodeURIComponent(currentGameSlug)}/${currentQuality}/${currentResolution}/metadata`
       );
       if (response.ok) {
         const data = await response.json();
-        if (data.status === 'placeholder') {
+        const fileCount = data.files?.length || 0;
+        if (data.status === 'placeholder' || fileCount === 0) {
           updateCheck('preset_available', {
-            status: 'warning',
-            message: 'Preset is a placeholder (no config files)',
+            status: 'failed',
+            message: fileCount === 0 ? 'No config files in preset' : 'Preset is a placeholder',
           });
         } else {
           updateCheck('preset_available', {
             status: 'passed',
-            message: `${data.files?.length || 0} config files`,
+            message: `${fileCount} config file${fileCount > 1 ? 's' : ''}`,
           });
         }
       } else if (response.status === 404) {
@@ -191,7 +219,7 @@ export function PreflightChecks({
           message: 'Preset not found',
         });
         setIsRunning(false);
-        onAllChecksPassed?.(false);
+        onAllChecksPassedRef.current?.(false);
         return;
       } else {
         updateCheck('preset_available', {
@@ -213,15 +241,21 @@ export function PreflightChecks({
       const response = await fetch('http://localhost:9000/probe');
       if (response.ok) {
         const data = await response.json();
-        if (data.status === 'healthy' || data.worker_running) {
+        // Check overall_omniparser_status or stats.worker_running
+        const isHealthy = data.overall_omniparser_status === 'healthy' || data.stats?.worker_running;
+        const healthyCount = data.omniparser_healthy_count || 0;
+        const totalCount = data.omniparser_total_count || 0;
+        const queueSize = data.stats?.current_queue_size || 0;
+
+        if (isHealthy) {
           updateCheck('omniparser_healthy', {
             status: 'passed',
-            message: `Queue: ${data.queue_size || 0}, Worker: running`,
+            message: `${healthyCount}/${totalCount} servers, Queue: ${queueSize}`,
           });
         } else {
           updateCheck('omniparser_healthy', {
             status: 'warning',
-            message: 'OmniParser worker not running',
+            message: `OmniParser: ${data.overall_omniparser_status || 'unknown'}`,
           });
         }
       } else {
@@ -237,23 +271,124 @@ export function PreflightChecks({
       });
     }
 
+    isRunningRef.current = false;
     setIsRunning(false);
 
     // Check if all passed (no failures)
     setChecks((current) => {
       const anyFailed = current.some((c) => c.status === 'failed');
-      onAllChecksPassed?.(!anyFailed);
+      onAllChecksPassedRef.current?.(!anyFailed);
       return current;
     });
-  }, [sut, gameName, gameSlug, quality, resolution, updateCheck, onAllChecksPassed]);
+  }, [sut, gameName, updateCheck]);
 
-  // Auto-run checks when inputs change
+  // Separate function to only run preset-related checks (5 & 6)
+  const runPresetChecks = useCallback(async () => {
+    const currentQuality = qualityRef.current;
+    const currentResolution = resolutionRef.current;
+    const currentGameSlug = gameSlugRef.current;
+
+    // Check 5: Preset selected
+    updateCheck('preset_selected', { status: 'checking' });
+    await delay(100);
+    if (!currentQuality || !currentResolution) {
+      updateCheck('preset_selected', {
+        status: 'failed',
+        message: 'Select quality and resolution',
+      });
+      setChecks((current) => {
+        const anyFailed = current.some((c) => c.status === 'failed');
+        onAllChecksPassedRef.current?.(!anyFailed);
+        return current;
+      });
+      return;
+    }
+    updateCheck('preset_selected', {
+      status: 'passed',
+      message: `${currentQuality} @ ${currentResolution}`,
+    });
+
+    // Check 6: Preset available
+    updateCheck('preset_available', { status: 'checking' });
+    await delay(100);
+    if (currentGameSlug) {
+      try {
+        const response = await fetch(
+          `http://localhost:5002/api/presets/${encodeURIComponent(currentGameSlug)}/${currentQuality}/${currentResolution}/metadata`
+        );
+        if (response.ok) {
+          const data = await response.json();
+          const fileCount = data.files?.length || 0;
+          if (data.status === 'placeholder' || fileCount === 0) {
+            updateCheck('preset_available', {
+              status: 'failed',
+              message: fileCount === 0 ? 'No config files in preset' : 'Preset is a placeholder',
+            });
+          } else {
+            updateCheck('preset_available', {
+              status: 'passed',
+              message: `${fileCount} config file${fileCount > 1 ? 's' : ''}`,
+            });
+          }
+        } else if (response.status === 404) {
+          updateCheck('preset_available', {
+            status: 'failed',
+            message: 'Preset not found',
+          });
+        } else {
+          updateCheck('preset_available', {
+            status: 'warning',
+            message: 'Could not verify preset',
+          });
+        }
+      } catch {
+        updateCheck('preset_available', {
+          status: 'warning',
+          message: 'Could not check preset',
+        });
+      }
+    }
+
+    // Update overall status
+    setChecks((current) => {
+      const anyFailed = current.some((c) => c.status === 'failed');
+      onAllChecksPassedRef.current?.(!anyFailed);
+      return current;
+    });
+  }, [updateCheck]);
+
+  // Key for SUT/game changes (runs full checks)
+  const sutGameKey = sut?.device_id
+    ? `${sut.device_id}-${gameSlug || ''}`
+    : '';
+
+  // Key for preset changes (runs only checks 5-6)
+  const presetKey = `${quality || ''}-${resolution || ''}`;
+
+  // Track if initial checks have run
+  const initialChecksRanRef = useRef(false);
+
+  // Run full checks when SUT or game changes
   useEffect(() => {
-    if (autoRun) {
-      const timer = setTimeout(runChecks, 500);
+    if (autoRun && sutGameKey) {
+      initialChecksRanRef.current = false;
+      const timer = setTimeout(() => {
+        runChecks();
+        initialChecksRanRef.current = true;
+      }, 500);
       return () => clearTimeout(timer);
     }
-  }, [sut?.device_id, gameName, quality, resolution, autoRun, runChecks]);
+  }, [sutGameKey, autoRun]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Run only preset checks when quality/resolution changes (after initial checks)
+  useEffect(() => {
+    if (autoRun && initialChecksRanRef.current && presetKey) {
+      const timer = setTimeout(() => {
+        runPresetChecks();
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [presetKey, autoRun]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const passedCount = checks.filter((c) => c.status === 'passed').length;
   const failedCount = checks.filter((c) => c.status === 'failed').length;
@@ -285,27 +420,26 @@ export function PreflightChecks({
         {checks.map((check) => {
           const statusInfo = STATUS_ICONS[check.status];
           return (
-            <div key={check.id} className="flex items-start gap-3 px-4 py-2.5">
-              <span className={`mt-0.5 text-lg ${statusInfo.color}`}>{statusInfo.icon}</span>
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-900">{check.label}</span>
-                  {check.message && (
-                    <span
-                      className={`text-xs ${
-                        check.status === 'passed'
-                          ? 'text-green-600'
-                          : check.status === 'failed'
-                          ? 'text-red-600'
-                          : check.status === 'warning'
-                          ? 'text-yellow-600'
-                          : 'text-gray-500'
-                      }`}
-                    >
-                      — {check.message}
-                    </span>
-                  )}
-                </div>
+            <div key={check.id} className="flex items-start gap-2 px-3 py-2 overflow-hidden">
+              <span className={`mt-0.5 flex-shrink-0 ${statusInfo.color}`}>{statusInfo.icon}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-gray-900">{check.label}</div>
+                {check.message && (
+                  <div
+                    className={`text-xs truncate ${
+                      check.status === 'passed'
+                        ? 'text-green-600'
+                        : check.status === 'failed'
+                        ? 'text-red-600'
+                        : check.status === 'warning'
+                        ? 'text-yellow-600'
+                        : 'text-gray-500'
+                    }`}
+                    title={check.message}
+                  >
+                    {check.message}
+                  </div>
+                )}
                 {check.details && (
                   <div className="mt-0.5 text-xs text-gray-500">{check.details}</div>
                 )}

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getSystemStatus } from '../api';
-import { getQueueHealth } from '../api/queueService';
+import { getQueueHealth, probeQueueService } from '../api/queueService';
 import { getSyncStats } from '../api/presetManager';
 import type { AllServicesHealth, ServiceHealthStatus } from '../types';
 
@@ -60,11 +60,25 @@ async function checkServiceHealth(
   }
 }
 
+// Number of consecutive failures before marking service as offline
+const FAILURE_THRESHOLD = 2;
+
 export function useServiceHealth(pollInterval: number = 5000): UseServiceHealthResult {
   const [services, setServices] = useState<AllServicesHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isMounted = useRef(true);
+
+  // Track consecutive failures per service to prevent flickering
+  const failureCountsRef = useRef<Record<string, number>>({
+    'raptor-x-backend': 0,
+    'discovery-service': 0,
+    'queue-service': 0,
+    'preset-manager': 0,
+  });
+
+  // Keep last known good status
+  const lastKnownStatusRef = useRef<Record<string, ServiceHealthStatus['status']>>({});
 
   const fetchAll = useCallback(async () => {
     try {
@@ -75,29 +89,39 @@ export function useServiceHealth(pollInterval: number = 5000): UseServiceHealthR
         queueStatus,
         presetStatus,
       ] = await Promise.all([
-        // Gemma Backend
+        // Raptor X Backend
         getSystemStatus()
-          .then((data) => ({
-            name: 'gemma-backend',
-            displayName: 'Gemma Backend',
-            status: 'online' as const,
-            url: '/api',
-            port: 5000,
-            details: {
-              mode: data.backend.mode,
-              uptime: data.backend.uptime,
-              websocket_clients: data.backend.websocket_clients,
-            },
-            lastChecked: new Date().toISOString(),
-          }))
-          .catch(() => ({
-            name: 'gemma-backend',
-            displayName: 'Gemma Backend',
-            status: 'offline' as const,
-            url: '/api',
-            port: 5000,
-            lastChecked: new Date().toISOString(),
-          })),
+          .then((data) => {
+            failureCountsRef.current['raptor-x-backend'] = 0;
+            lastKnownStatusRef.current['raptor-x-backend'] = 'online';
+            return {
+              name: 'raptor-x-backend',
+              displayName: 'Raptor X Backend',
+              status: 'online' as const,
+              url: '/api',
+              port: 5000,
+              details: {
+                mode: data.backend.mode,
+                uptime: data.backend.uptime,
+                websocket_clients: data.backend.websocket_clients,
+              },
+              lastChecked: new Date().toISOString(),
+            };
+          })
+          .catch(() => {
+            failureCountsRef.current['raptor-x-backend']++;
+            // Only mark offline after consecutive failures
+            const shouldMarkOffline = failureCountsRef.current['raptor-x-backend'] >= FAILURE_THRESHOLD;
+            const lastStatus = lastKnownStatusRef.current['raptor-x-backend'];
+            return {
+              name: 'raptor-x-backend',
+              displayName: 'Raptor X Backend',
+              status: (shouldMarkOffline ? 'offline' : (lastStatus === 'online' ? 'online' : 'offline')) as 'online' | 'offline',
+              url: '/api',
+              port: 5000,
+              lastChecked: new Date().toISOString(),
+            };
+          }),
 
         // Discovery Service
         checkServiceHealth(
@@ -161,28 +185,60 @@ export function useServiceHealth(pollInterval: number = 5000): UseServiceHealthR
 
       if (!isMounted.current) return;
 
-      // Check OmniParser instances (we'll check the primary one via system status)
+      // Get OmniParser instances from Queue Service probe endpoint
       let omniparserInstances: Array<ServiceHealthStatus & { instanceId: number; enabled: boolean }> = [];
 
       try {
-        const systemStatus = await getSystemStatus();
-        if (systemStatus.omniparser) {
-          omniparserInstances = [{
-            name: 'omniparser-0',
-            displayName: 'OmniParser 1',
-            instanceId: 0,
-            enabled: true,
-            status: systemStatus.omniparser.status === 'online' ? 'online' : 'offline',
-            url: systemStatus.omniparser.url,
-            port: 8000,
-            details: {
-              queue_size: systemStatus.omniparser.queue_size,
-            },
-            lastChecked: new Date().toISOString(),
-          }];
+        const probeData = await probeQueueService();
+        if (probeData.omniparser_status && Array.isArray(probeData.omniparser_status)) {
+          omniparserInstances = probeData.omniparser_status.map((server, index) => {
+            // Extract port from URL
+            let port = 8000;
+            try {
+              const url = new URL(server.url);
+              port = parseInt(url.port) || 8000;
+            } catch {
+              // Use default port
+            }
+
+            return {
+              name: `omniparser-${index}`,
+              displayName: `OmniParser ${index + 1}`,
+              instanceId: index,
+              enabled: true,
+              status: server.status === 'healthy' ? 'online' as const : 'offline' as const,
+              url: server.url,
+              port,
+              details: {
+                requests_served: server.requests_served,
+                last_used: server.last_used,
+              },
+              lastChecked: new Date().toISOString(),
+            };
+          });
         }
       } catch {
-        // OmniParser check failed, leave empty
+        // OmniParser check failed via probe, try system status as fallback
+        try {
+          const systemStatus = await getSystemStatus();
+          if (systemStatus.omniparser) {
+            omniparserInstances = [{
+              name: 'omniparser-0',
+              displayName: 'OmniParser 1',
+              instanceId: 0,
+              enabled: true,
+              status: systemStatus.omniparser.status === 'online' ? 'online' : 'offline',
+              url: systemStatus.omniparser.url,
+              port: 8000,
+              details: {
+                queue_size: systemStatus.omniparser.queue_size,
+              },
+              lastChecked: new Date().toISOString(),
+            }];
+          }
+        } catch {
+          // Both failed, leave empty
+        }
       }
 
       setServices({

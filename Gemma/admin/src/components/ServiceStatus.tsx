@@ -30,7 +30,7 @@ export function ServiceStatus({ systemStatus }: ServiceStatusProps) {
       <div className="space-y-3">
         {/* Backend */}
         <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-600">Gemma Backend</span>
+          <span className="text-sm text-gray-600">Raptor X Backend</span>
           <StatusBadge status={systemStatus.backend.running ? 'online' : 'offline'} size="sm" />
         </div>
 
