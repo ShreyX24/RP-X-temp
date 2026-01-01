@@ -24,3 +24,6 @@ export { SUTDetailPanel } from './SUTDetailPanel';
 export { AutomationTimeline, StepIndicator, StepDetailPopover, TimelineStep } from './AutomationTimeline';
 export { RunTimeline, TimelineNode, EventDetailPanel, EventIcon } from './RunTimeline';
 export type { TimelineEvent } from './RunTimeline';
+
+// Campaign components
+export { CampaignModal } from './CampaignModal';

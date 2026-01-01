@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useGames, useDevices } from '../hooks';
-import { GameCard, PresetMatrix, PreflightChecks } from '../components';
+import { GameCard, PresetMatrix, PreflightChecks, CampaignModal } from '../components';
 import type { QualityLevel, Resolution, PresetAvailability } from '../components';
-import { startRun } from '../api';
+import { startRun, getSutResolutions } from '../api';
 import { getSutInstalledGames, getPresetMatrix, type InstalledGameInfo, type SutInstalledGamesResponse } from '../api/presetManager';
-import type { GameConfig, SUT } from '../types';
+import type { GameConfig, SUT, SutDisplayResolution } from '../types';
 
 export function Games() {
   const { gamesList, loading, reload } = useGames();
@@ -21,6 +21,32 @@ export function Games() {
 
   // Separate SUT selection for configs view (to check availability)
   const [configsSutIp, setConfigsSutIp] = useState<string>('');
+
+  // Campaign mode state
+  const [campaignMode, setCampaignMode] = useState(false);
+  const [selectedCampaignGames, setSelectedCampaignGames] = useState<Set<string>>(new Set());
+  const [showCampaignModal, setShowCampaignModal] = useState(false);
+
+  const handleCampaignToggle = (gameName: string, selected: boolean) => {
+    setSelectedCampaignGames(prev => {
+      const next = new Set(prev);
+      if (selected) {
+        next.add(gameName);
+      } else {
+        next.delete(gameName);
+      }
+      return next;
+    });
+  };
+
+  const handleClearSelection = () => {
+    setSelectedCampaignGames(new Set());
+  };
+
+  const handleExitCampaignMode = () => {
+    setCampaignMode(false);
+    setSelectedCampaignGames(new Set());
+  };
 
   const handleReload = async () => {
     setReloading(true);
@@ -76,6 +102,20 @@ export function Games() {
           <p className="text-gray-500">Configure and run game automation</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Campaign Mode Toggle */}
+          <button
+            onClick={() => campaignMode ? handleExitCampaignMode() : setCampaignMode(true)}
+            className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 ${
+              campaignMode
+                ? 'bg-purple-500 text-white hover:bg-purple-600'
+                : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+            {campaignMode ? 'Exit Campaign Mode' : 'Campaign Mode'}
+          </button>
           {/* View Mode Toggle */}
           <div className="flex rounded-lg border border-gray-300 overflow-hidden">
             <button
@@ -108,6 +148,47 @@ export function Games() {
           </button>
         </div>
       </div>
+
+      {/* Campaign Mode Floating Action Bar */}
+      {campaignMode && (
+        <div className="sticky top-0 z-40 bg-purple-600 text-white rounded-lg p-4 shadow-lg flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              <span className="font-semibold">Campaign Mode</span>
+            </div>
+            <div className="h-6 w-px bg-purple-400"></div>
+            <span className="text-purple-100">
+              {selectedCampaignGames.size} game{selectedCampaignGames.size !== 1 ? 's' : ''} selected
+            </span>
+            {selectedCampaignGames.size > 0 && (
+              <button
+                onClick={handleClearSelection}
+                className="text-purple-200 hover:text-white text-sm underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleExitCampaignMode}
+              className="px-4 py-2 bg-purple-700 hover:bg-purple-800 rounded-lg text-sm font-medium"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => setShowCampaignModal(true)}
+              disabled={selectedCampaignGames.size === 0}
+              className="px-4 py-2 bg-white text-purple-600 hover:bg-purple-50 rounded-lg text-sm font-semibold disabled:bg-purple-300 disabled:text-purple-500"
+            >
+              Create Campaign ({selectedCampaignGames.size})
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* SUT Selector (shown in installed view) */}
       {viewMode === 'installed' && (
@@ -213,6 +294,9 @@ export function Games() {
                 isSelected={selectedGame?.name === game.name}
                 disabled={onlineDevices.length === 0}
                 sutIp={configsSutIp}
+                campaignMode={campaignMode}
+                isCampaignSelected={selectedCampaignGames.has(game.name)}
+                onCampaignToggle={handleCampaignToggle}
               />
             ))}
           </div>
@@ -279,6 +363,22 @@ export function Games() {
           onClose={() => {
             setShowRunModal(false);
             setSelectedGame(null);
+          }}
+        />
+      )}
+
+      {/* Campaign Modal */}
+      {showCampaignModal && (
+        <CampaignModal
+          selectedGames={Array.from(selectedCampaignGames)}
+          devices={onlineDevices}
+          onClose={() => setShowCampaignModal(false)}
+          onRemoveGame={(gameName) => handleCampaignToggle(gameName, false)}
+          onSuccess={(campaignId) => {
+            // Clear selection and exit campaign mode after successful creation
+            handleExitCampaignMode();
+            // Could navigate to runs page or show success message
+            console.log(`Campaign ${campaignId} created successfully`);
           }}
         />
       )}
@@ -382,6 +482,10 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
   const [preflightPassed, setPreflightPassed] = useState(false);
   const [manualPresetOverride, setManualPresetOverride] = useState(false);
 
+  // SUT display resolution state
+  const [sutResolutions, setSutResolutions] = useState<SutDisplayResolution[]>([]);
+  const [loadingSutResolutions, setLoadingSutResolutions] = useState(false);
+
   // Get the selected SUT object
   const selectedSut = devices.find(d => d.ip === selectedDevice) || null;
 
@@ -436,6 +540,35 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
 
     checkAvailability();
   }, [selectedDevice, game.name, devices]);
+
+  // Fetch SUT display resolutions when device is selected
+  useEffect(() => {
+    if (!selectedDevice) {
+      setSutResolutions([]);
+      return;
+    }
+
+    const fetchSutResolutions = async () => {
+      setLoadingSutResolutions(true);
+      try {
+        // Use device IP as identifier for the resolution API
+        const response = await getSutResolutions(selectedDevice);
+        setSutResolutions(response.resolutions || []);
+      } catch (err) {
+        console.error('Failed to fetch SUT resolutions:', err);
+        // Fall back to common resolutions if fetch fails
+        setSutResolutions([
+          { width: 1920, height: 1080, name: '1080p' },
+          { width: 2560, height: 1440, name: '1440p' },
+          { width: 3840, height: 2160, name: '4K' },
+        ]);
+      } finally {
+        setLoadingSutResolutions(false);
+      }
+    };
+
+    fetchSutResolutions();
+  }, [selectedDevice]);
 
   // Fetch preset matrix when game is found
   useEffect(() => {
@@ -492,8 +625,8 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
     setError(null);
 
     try {
-      // Pass the selected preset level to startRun
-      await startRun(selectedDevice, game.name, iterations);
+      // Pass quality and resolution to startRun
+      await startRun(selectedDevice, game.name, iterations, selectedQuality, selectedResolution);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start run');
@@ -611,6 +744,8 @@ function RunGameModal({ game, devices, preSelectedSut, onClose }: RunGameModalPr
                       setManualPresetOverride(false); // Reset override when selection changes
                     }}
                     disabled={!installedInfo?.has_presets}
+                    sutResolutions={sutResolutions}
+                    loadingSutResolutions={loadingSutResolutions}
                   />
                 )}
               </div>

@@ -228,8 +228,12 @@ class AutomationOrchestrator:
         """
         logger.info(f"Starting execution of {run.game_name} on SUT {run.sut_ip}")
 
-        # Create run directory early for timeline storage
-        base_run_dir = self._get_run_directory(run)
+        # Get run directory from storage manager (correct path for new run structure)
+        if self.storage:
+            base_run_dir = str(self.storage.get_run_dir(run.run_id))
+        else:
+            # Fallback to old method if storage not available
+            base_run_dir = self._get_run_directory(run)
         os.makedirs(base_run_dir, exist_ok=True)
 
         # Create timeline manager for comprehensive run tracking
@@ -493,15 +497,13 @@ class AutomationOrchestrator:
                         elif login_result.get('status') == 'conflict':
                             # Account is in use on another device - try alternative
                             if timeline:
-                                timeline.warning(f"Steam: Account '{username}' is in use on another device!")
+                                timeline.steam_account_busy(username, run.game_name)
                             logger.warning(f"Steam account '{username}' is in use on another device")
 
                             # Mark this account as externally busy
                             account_pool.mark_account_externally_busy(run.sut_ip, username, run.game_name)
 
                             # Try to get an alternative account
-                            if timeline:
-                                timeline.info("Checking for alternative Steam account...")
                             logger.info(f"Looking for alternative Steam account for SUT {run.sut_ip}")
 
                             alternative = account_pool.try_alternative_account(run.sut_ip, run.game_name)
@@ -509,7 +511,7 @@ class AutomationOrchestrator:
                             if alternative:
                                 alt_username, alt_password = alternative
                                 if timeline:
-                                    timeline.info(f"Steam: Trying alternative account '{alt_username}'")
+                                    timeline.steam_account_switching(username, alt_username)
                                 logger.info(f"Trying alternative Steam account: {alt_username}")
 
                                 # Retry with alternative account
@@ -536,8 +538,7 @@ class AutomationOrchestrator:
                             else:
                                 # No alternative accounts available
                                 if timeline:
-                                    timeline.error("No alternative Steam accounts available!")
-                                    timeline.error("All configured account pairs are either allocated or in use elsewhere")
+                                    timeline.steam_no_accounts(run.game_name)
                                 logger.error("No alternative Steam account pairs available")
                                 return False
                         else:
@@ -612,7 +613,7 @@ class AutomationOrchestrator:
             # ===== Preset Sync =====
             if timeline:
                 timeline.preset_syncing(game_config.name)
-            preset_result = self._sync_preset_to_sut(game_config, device)
+            preset_result = self._sync_preset_to_sut(game_config, device, run.quality, run.resolution)
             if timeline:
                 if preset_result:
                     timeline.preset_synced(game_config.name)
@@ -620,13 +621,28 @@ class AutomationOrchestrator:
                     timeline.preset_skipped("No preset configured or sync failed")
 
             # ===== Resolution Switching =====
-            # Check if game config has a target resolution different from current
+            # Priority: run.resolution > game_config.resolution
             resolution_changed = False
-            target_resolution = getattr(game_config, 'resolution', None)
+
+            # Map resolution presets to dimensions
+            resolution_map = {
+                '720p': (1280, 720),
+                '1080p': (1920, 1080),
+                '1440p': (2560, 1440),
+                '2160p': (3840, 2160),
+            }
+
+            # Check for run-level resolution (from UI selection) or fall back to game config
+            target_resolution = run.resolution or getattr(game_config, 'resolution', None)
+
             if target_resolution:
-                # Parse resolution string like "1920x1080"
+                # Parse resolution - could be preset (e.g., "1080p") or dimensions (e.g., "1920x1080")
                 try:
-                    target_width, target_height = map(int, target_resolution.lower().split('x'))
+                    if target_resolution in resolution_map:
+                        target_width, target_height = resolution_map[target_resolution]
+                        logger.info(f"Using run preset resolution: {target_resolution} -> {target_width}x{target_height}")
+                    else:
+                        target_width, target_height = map(int, target_resolution.lower().split('x'))
 
                     # Only change if different from current
                     if target_width != screen_width or target_height != screen_height:
@@ -665,8 +681,15 @@ class AutomationOrchestrator:
 
             if game_path:
                 # ===== Game Launch =====
+                # SUT waits up to 60s for game process to appear
+                process_wait_timeout = 60
                 if timeline:
                     timeline.game_launching(game_config.name, game_path)
+                    # Add process wait event - frontend shows 60s countdown
+                    timeline.game_process_waiting(
+                        process_name=game_config.process_id or game_config.name,
+                        timeout_seconds=process_wait_timeout
+                    )
                 logger.info(f"Launching game: {game_path}")
 
                 try:
@@ -678,6 +701,10 @@ class AutomationOrchestrator:
                     game_launcher.launch(game_path, process_id=process_id, startup_wait=startup_wait, launch_args=launch_args)
                     logger.info(f"Game launched successfully: {game_path}")
                     if timeline:
+                        # Mark process as detected (replaces process wait event)
+                        timeline.game_process_detected(
+                            process_name=game_config.process_id or game_config.name
+                        )
                         timeline.game_launched(game_config.name)
 
                     # ===== Check for Steam Dialogs (Optional) =====
@@ -696,22 +723,53 @@ class AutomationOrchestrator:
                     )
                     if steam_dialog_result == "retry_with_alt_account":
                         # Account conflict - need to retry with different account
+                        # Timeline event already emitted by _check_steam_dialogs
                         logger.warning("Steam account conflict - will retry with alternative account")
-                        if timeline:
-                            timeline.warning("Steam account conflict detected, trying alternative account")
                         raise RuntimeError("STEAM_ACCOUNT_CONFLICT")
                     elif steam_dialog_result == "fail":
                         # Dialog detected but cannot be handled
                         raise RuntimeError("Steam dialog could not be handled")
 
                 except Exception as e:
-                    error_msg = f"Failed to launch game '{game_config.name}': {str(e)}"
+                    error_str = str(e)
+                    error_msg = f"Failed to launch game '{game_config.name}': {error_str}"
                     logger.error(error_msg)
 
+                    # Check if this might be a Steam dialog blocking (process not detected)
+                    if "not detected" in error_str.lower() or "process" in error_str.lower():
+                        # Mark process wait as timed out
+                        if timeline:
+                            timeline.game_process_timeout(
+                                process_name=game_config.process_id or game_config.name,
+                                timeout_seconds=process_wait_timeout
+                            )
+
+                        logger.info("Process not detected - checking for Steam dialogs...")
+                        if timeline:
+                            timeline.steam_dialog_checking()
+
+                        # Run steam dialog check
+                        dialog_result = self._check_steam_dialogs(
+                            network=network,
+                            device=device,
+                            run=run,
+                            game_config=game_config,
+                            account_pool=account_pool,
+                            timeline=timeline,
+                            enabled=True
+                        )
+
+                        if dialog_result == "retry_with_alt_account":
+                            logger.warning("Steam dialog detected (account busy) - will retry with alternative")
+                            raise RuntimeError("STEAM_ACCOUNT_CONFLICT")
+                        elif dialog_result is None:
+                            # Dialog might have been dismissed - but launch already failed
+                            logger.info("No Steam dialog found or dismissed, but launch already timed out")
+
                     # Check if it's a 404 error (SUT service issue)
-                    if "404" in str(e) or "NOT FOUND" in str(e):
+                    if "404" in error_str or "NOT FOUND" in error_str:
                         error_msg = f"SUT service error: /launch endpoint not found on {device.ip}:{device.port}. Please ensure gemma_sut_service.py is running on the SUT."
-                    elif "Connection" in str(e) or "timeout" in str(e).lower():
+                    elif "Connection" in error_str or "timeout" in error_str.lower():
                         error_msg = f"Connection error: Cannot reach SUT at {device.ip}:{device.port}. Please check if the SUT service is running."
 
                     if timeline:
@@ -1006,7 +1064,7 @@ class AutomationOrchestrator:
                 screen_width, screen_height = 1920, 1080
 
             if timeline:
-                timeline.info("Checking for Steam dialogs...")
+                timeline.steam_dialog_checking()
 
             # Wait for dialog to appear
             initial_wait = settings.get('initial_wait', 3)
@@ -1018,6 +1076,22 @@ class AutomationOrchestrator:
 
             for attempt in range(max_attempts):
                 logger.debug(f"Steam dialog check attempt {attempt + 1}/{max_attempts}")
+
+                # Focus Steam window before taking screenshot
+                try:
+                    focus_resp = requests.post(
+                        f"{sut_base_url}/focus",
+                        json={"process_name": "steam"},
+                        timeout=5
+                    )
+                    if focus_resp.status_code == 200:
+                        logger.debug("Steam window focused")
+                    else:
+                        logger.debug(f"Could not focus Steam: {focus_resp.status_code}")
+                except Exception as e:
+                    logger.debug(f"Focus Steam failed (may not be running): {e}")
+
+                time.sleep(0.5)  # Brief pause after focus
 
                 # Get screenshot from SUT
                 try:
@@ -1070,7 +1144,7 @@ class AutomationOrchestrator:
                         logger.info(f"Steam dialog detected: {dialog_name} (matched: {matched})")
 
                         if timeline:
-                            timeline.warning(f"Steam dialog detected: {dialog_name}")
+                            timeline.steam_dialog_detected(dialog_name, handler)
 
                         # Find and click button (prefer exact matches)
                         action = dialog_cfg.get('action', {})
@@ -1106,6 +1180,7 @@ class AutomationOrchestrator:
                                         break
 
                         # Click the button
+                        click_success = False
                         if button_coords:
                             try:
                                 click_resp = requests.post(
@@ -1115,6 +1190,7 @@ class AutomationOrchestrator:
                                 )
                                 if click_resp.status_code == 200:
                                     logger.info(f"Clicked '{button_text}' at {button_coords}")
+                                    click_success = True
                                 time.sleep(0.5)
                             except Exception as e:
                                 logger.warning(f"Click failed: {e}")
@@ -1126,28 +1202,34 @@ class AutomationOrchestrator:
                                     json={"type": "key", "key": "escape"},
                                     timeout=10
                                 )
+                                click_success = True
                                 time.sleep(0.5)
                             except Exception:
                                 pass
 
                         # Return based on handler
                         if handler == "try_alternative_account":
-                            if account_pool:
-                                current_account = getattr(run, '_current_steam_username', None)
-                                if current_account:
-                                    account_pool.mark_account_externally_busy(
-                                        run.sut_ip, current_account, game_config.name
-                                    )
+                            current_account = getattr(run, '_current_steam_username', None)
+                            if timeline:
+                                timeline.steam_account_busy(current_account or "unknown", game_config.name)
+                            if account_pool and current_account:
+                                account_pool.mark_account_externally_busy(
+                                    run.sut_ip, current_account, game_config.name
+                                )
                             return "retry_with_alt_account"
                         elif handler == "fail_run":
                             return "fail"
                         else:  # "continue", "retry_once", etc
+                            if timeline:
+                                timeline.steam_dialog_dismissed(dialog_name)
                             return None
 
                 if attempt < max_attempts - 1:
                     time.sleep(check_interval)
 
             logger.debug("No Steam dialog detected")
+            if timeline:
+                timeline.steam_check_passed()
             return None
 
         except Exception as e:
@@ -1240,7 +1322,7 @@ class AutomationOrchestrator:
         """Get the base run directory path"""
         return f"logs/{run.game_name.replace(' ', '_')}/run_{run.run_id}"
 
-    def _sync_preset_to_sut(self, game_config, device) -> bool:
+    def _sync_preset_to_sut(self, game_config, device, run_quality: str = None, run_resolution: str = None) -> bool:
         """
         Sync game preset to SUT before launching.
 
@@ -1282,14 +1364,25 @@ class AutomationOrchestrator:
             game_short_name = name_mappings.get(game_short_name, game_short_name)
             logger.debug(f"Derived preset folder from name: {game_short_name}")
 
-        # Build preset level from game config preset and resolution
+        # Build preset level from run params (priority) or game config preset and resolution
         # New structure uses quality-resolution format: high-1080p, medium-1440p, etc.
-        quality = getattr(game_config, 'preset', 'high').lower()
-        resolution = getattr(game_config, 'resolution', '1920x1080')
-        # Convert resolution like "1920x1080" to "1080p"
+
+        # Priority: run_quality > game_config.preset
+        quality = run_quality or getattr(game_config, 'preset', 'high').lower()
+
+        # Priority: run_resolution > game_config.resolution
+        resolution = run_resolution or getattr(game_config, 'resolution', '1920x1080')
+
+        # Convert resolution to short format if needed
         res_map = {'1920x1080': '1080p', '2560x1440': '1440p', '3840x2160': '2160p', '1280x720': '720p'}
-        res_short = res_map.get(resolution, '1080p')
+        # Handle both preset format (e.g., "1080p") and dimensions (e.g., "1920x1080")
+        if resolution in ['720p', '1080p', '1440p', '2160p']:
+            res_short = resolution
+        else:
+            res_short = res_map.get(resolution, '1080p')
+
         preset_level = f"{quality}-{res_short}"
+        logger.info(f"Preset level for sync: {preset_level} (quality={quality}, resolution={resolution})")
 
         # Get device unique ID
         device_unique_id = getattr(device, 'unique_id', None)

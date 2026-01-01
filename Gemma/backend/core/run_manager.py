@@ -15,6 +15,7 @@ import queue
 import copy
 
 from .run_storage import RunStorageManager, SUTInfo, RunConfig, RunManifest
+from .log_collector import LogCollector
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,9 @@ class AutomationRun:
     created_at: datetime = field(default_factory=datetime.now)
     sut_info: Optional[Dict[str, Any]] = None  # SUT hardware metadata from manifest
     folder_name: Optional[str] = None  # Run folder name for logs/artifacts
+    campaign_id: Optional[str] = None  # Links to parent campaign (if part of multi-game campaign)
+    quality: Optional[str] = None  # 'low' | 'medium' | 'high' | 'ultra'
+    resolution: Optional[str] = None  # '720p' | '1080p' | '1440p' | '2160p'
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
@@ -147,6 +151,9 @@ class AutomationRun:
             'created_at': created,
             'sut_info': self.sut_info,
             'folder_name': self.folder_name,
+            'campaign_id': self.campaign_id,
+            'quality': self.quality,
+            'resolution': self.resolution,
         }
 
 
@@ -166,6 +173,9 @@ class RunManager:
 
         # Persistent storage manager
         self.storage = RunStorageManager()
+
+        # Log collector for pulling service logs at run completion
+        self.log_collector = LogCollector(self.storage, sut_client)
 
         # Map run_id to storage manifest
         self._storage_map: Dict[str, RunManifest] = {}
@@ -357,25 +367,42 @@ class RunManager:
         
         logger.info("RunManager stopped")
     
-    def queue_run(self, game_name: str, sut_ip: str, sut_device_id: str, iterations: int = 1) -> str:
-        """Queue a new automation run"""
-        logger.info(f"Attempting to queue run: {game_name} on {sut_ip} ({iterations} iterations)")
-        
+    def queue_run(self, game_name: str, sut_ip: str, sut_device_id: str, iterations: int = 1,
+                  campaign_id: Optional[str] = None, quality: Optional[str] = None,
+                  resolution: Optional[str] = None) -> str:
+        """Queue a new automation run
+
+        Args:
+            game_name: Name of the game to run
+            sut_ip: IP address of the SUT
+            sut_device_id: Unique device ID of the SUT
+            iterations: Number of iterations to run
+            campaign_id: Optional campaign ID if this run is part of a multi-game campaign
+            quality: Optional quality preset ('low', 'medium', 'high', 'ultra')
+            resolution: Optional resolution preset ('720p', '1080p', '1440p', '2160p')
+        """
+        campaign_info = f" (campaign: {campaign_id[:8]}...)" if campaign_id else ""
+        preset_info = f" (preset: {quality}@{resolution})" if quality and resolution else ""
+        logger.info(f"Attempting to queue run: {game_name} on {sut_ip} ({iterations} iterations){campaign_info}{preset_info}")
+
         # Check if run manager is running
         if not self.running:
             logger.error("Cannot queue run: Run manager is not running")
             raise RuntimeError("Run manager is not running")
-        
+
         try:
             run_id = str(uuid.uuid4())
             logger.info(f"Generated run_id: {run_id}")
-            
+
             run = AutomationRun(
                 run_id=run_id,
                 game_name=game_name,
                 sut_ip=sut_ip,
                 sut_device_id=sut_device_id,
-                iterations=iterations
+                iterations=iterations,
+                campaign_id=campaign_id,
+                quality=quality,
+                resolution=resolution
             )
             run.progress.total_iterations = iterations
             logger.info(f"Created AutomationRun object for {run_id}")
@@ -736,12 +763,50 @@ class RunManager:
             self.complete_run(run.run_id, success, results, error_message)
             logger.info(f"Completed run call finished for {run.run_id}")
 
+            # Collect service logs for correlation
+            self._collect_run_logs(run)
+
         except Exception as e:
             logger.error(f"Critical error executing run {run.run_id}: {e}", exc_info=True)
             if storage_manifest:
                 self.storage.add_error(run.run_id, str(e))
                 self.storage.complete_run(run.run_id, False)
             self.complete_run(run.run_id, False, error_message=f"Critical error: {str(e)}")
+
+            # Still try to collect logs even on critical failure
+            try:
+                self._collect_run_logs(run)
+            except Exception as log_err:
+                logger.warning(f"Failed to collect logs after critical error: {log_err}")
+
+    def _collect_run_logs(self, run: AutomationRun):
+        """
+        Collect service logs at run completion for correlation.
+
+        Pulls logs from:
+        - SUT Client (via HTTP API)
+        - Queue Service (local file)
+        - Preset Manager (local file)
+        - SUT Discovery (local file)
+        """
+        try:
+            # Get run start time for filtering
+            run_start = run.progress.start_time if run.progress else None
+
+            logger.info(f"Collecting service logs for run {run.run_id}")
+            results = self.log_collector.collect_all_logs(
+                run_id=run.run_id,
+                sut_ip=run.sut_ip,
+                run_start_time=run_start
+            )
+
+            # Log summary
+            collected = sum(1 for r in results.values() if r.get('success'))
+            total_lines = sum(r.get('lines_collected', 0) for r in results.values())
+            logger.info(f"Log collection complete: {collected}/{len(results)} services, {total_lines} total lines")
+
+        except Exception as e:
+            logger.warning(f"Log collection failed for run {run.run_id}: {e}")
 
     def _create_run_storage(self, run: AutomationRun) -> Optional[RunManifest]:
         """Create persistent storage for a run, fetching SUT info"""
@@ -750,17 +815,27 @@ class RunManager:
             sut_info = self._fetch_sut_info(run.sut_ip)
 
             # Create run config
+            run_type = "campaign" if run.campaign_id else "single"
             config = RunConfig(
-                run_type="single",  # TODO: Support bulk runs
+                run_type=run_type,
                 games=[run.game_name],
                 iterations=run.iterations,
             )
+
+            # Get campaign name if part of campaign
+            campaign_name = None
+            if run.campaign_id and hasattr(self, 'campaign_manager') and self.campaign_manager:
+                campaign = self.campaign_manager.get_campaign(run.campaign_id)
+                if campaign:
+                    campaign_name = campaign.name
 
             # Create storage structure
             manifest = self.storage.create_run(
                 run_id=run.run_id,
                 sut_info=sut_info,
                 config=config,
+                campaign_id=run.campaign_id,
+                campaign_name=campaign_name,
             )
 
             self._storage_map[run.run_id] = manifest

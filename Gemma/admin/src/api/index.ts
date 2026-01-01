@@ -6,6 +6,7 @@ import type {
   SystemStatus,
   SUT,
   AutomationRun,
+  SutDisplayResolutionsResponse,
 } from '../types';
 import { TIMEOUTS } from '../config';
 
@@ -161,11 +162,19 @@ export async function getRun(runId: string): Promise<AutomationRun> {
 export async function startRun(
   sutIp: string,
   gameName: string,
-  iterations: number = 1
+  iterations: number = 1,
+  quality?: string,   // 'low' | 'medium' | 'high' | 'ultra'
+  resolution?: string // '720p' | '1080p' | '1440p' | '2160p'
 ): Promise<{ status: string; run_id: string; message: string }> {
   return fetchJson<{ status: string; run_id: string; message: string }>(`${API_BASE}/runs`, {
     method: 'POST',
-    body: JSON.stringify({ sut_ip: sutIp, game_name: gameName, iterations }),
+    body: JSON.stringify({
+      sut_ip: sutIp,
+      game_name: gameName,
+      iterations,
+      quality,
+      resolution,
+    }),
   });
 }
 
@@ -257,6 +266,22 @@ export async function launchApplication(
   });
 }
 
+/**
+ * Get supported display resolutions from a SUT
+ * @param deviceId - Device ID or IP address
+ * @param commonOnly - If true, only return common resolutions (720p, 1080p, 1440p, 4K)
+ */
+export async function getSutResolutions(
+  deviceId: string,
+  commonOnly: boolean = true
+): Promise<SutDisplayResolutionsResponse> {
+  const params = commonOnly ? '?common_only=true' : '';
+  return fetchJson<SutDisplayResolutionsResponse>(
+    `${API_BASE}/sut/${deviceId}/display/resolutions${params}`,
+    { timeout: TIMEOUTS.default }
+  );
+}
+
 // OmniParser APIs
 export async function getOmniparserStatus(): Promise<unknown> {
   return fetchJson<unknown>(`${API_BASE}/omniparser/status`);
@@ -280,6 +305,83 @@ export function createWebSocketConnection(
   if (onError) ws.onerror = onError;
 
   return ws;
+}
+
+// =====================================================================
+// Campaign APIs (Multi-Game Runs)
+// =====================================================================
+
+export interface Campaign {
+  campaign_id: string;
+  name: string;
+  sut_ip: string;
+  sut_device_id: string;
+  games: string[];
+  iterations_per_game: number;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'partially_completed' | 'stopped';
+  run_ids: string[];
+  progress: {
+    total_games: number;
+    completed_games: number;
+    failed_games: number;
+    current_game: string | null;
+    current_game_index: number;
+  };
+  created_at: string;
+  completed_at: string | null;
+  error_message: string | null;
+  runs?: AutomationRun[];  // Populated when fetching single campaign
+}
+
+export interface CreateCampaignResponse {
+  status: string;
+  campaign_id: string;
+  name: string;
+  run_ids: string[];
+  total_games: number;
+  iterations_per_game: number;
+  campaign_status: string;
+  message: string;
+}
+
+export interface CampaignsResponse {
+  active: Campaign[];
+  history: Campaign[];
+}
+
+export async function createCampaign(
+  sutIp: string,
+  games: string[],
+  iterations: number = 1,
+  name?: string,
+  quality?: string,    // 'low' | 'medium' | 'high' | 'ultra'
+  resolution?: string  // '720p' | '1080p' | '1440p' | '2160p'
+): Promise<CreateCampaignResponse> {
+  return fetchJson<CreateCampaignResponse>(`${API_BASE}/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({
+      sut_ip: sutIp,
+      games,
+      iterations,
+      name,
+      quality,
+      resolution,
+    }),
+  });
+}
+
+export async function getCampaigns(): Promise<CampaignsResponse> {
+  return fetchJson<CampaignsResponse>(`${API_BASE}/campaigns`);
+}
+
+export async function getCampaign(campaignId: string): Promise<Campaign> {
+  return fetchJson<Campaign>(`${API_BASE}/campaigns/${campaignId}`);
+}
+
+export async function stopCampaign(campaignId: string): Promise<{ status: string; message: string }> {
+  return fetchJson<{ status: string; message: string }>(`${API_BASE}/campaigns/${campaignId}/stop`, {
+    method: 'POST',
+  });
 }
 
 export { ApiError, TimeoutError };

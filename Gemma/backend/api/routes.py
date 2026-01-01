@@ -404,7 +404,62 @@ class APIRoutes:
             except Exception as e:
                 logger.error(f"Error taking screenshot from {device_id}: {e}")
                 return jsonify({"error": str(e)}), 500
-                
+
+        @app.route('/api/sut/<device_id>/display/resolutions', methods=['GET'])
+        def get_sut_display_resolutions(device_id):
+            """Get supported display resolutions from a specific SUT"""
+            try:
+                import requests as http_requests
+
+                # Find device by ID or IP
+                device = self.device_registry.get_device_by_id(device_id)
+
+                # If not found by ID, check external discovery service
+                if not device and self.use_external_discovery and self.discovery_client:
+                    try:
+                        suts = self.discovery_client.get_suts_sync()
+                        for sut in suts:
+                            if sut.get("unique_id") == device_id or sut.get("ip") == device_id:
+                                class DeviceProxy:
+                                    def __init__(self, data):
+                                        self.ip = data.get("ip")
+                                        self.port = data.get("port", 8080)
+                                device = DeviceProxy(sut)
+                                break
+                    except Exception as e:
+                        logger.warning(f"Discovery service error: {e}")
+
+                if not device:
+                    return jsonify({"error": f"Device {device_id} not found"}), 404
+
+                # Query SUT for supported resolutions
+                try:
+                    common_only = request.args.get('common_only', 'true').lower() == 'true'
+                    url = f"http://{device.ip}:{device.port}/display/resolutions"
+                    if common_only:
+                        url += "?common_only=true"
+
+                    response = http_requests.get(url, timeout=10)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    return jsonify({
+                        "status": "success",
+                        "resolutions": data.get("resolutions", []),
+                        "device_id": device_id
+                    })
+
+                except http_requests.RequestException as e:
+                    logger.error(f"Failed to get resolutions from SUT {device_id}: {e}")
+                    return jsonify({
+                        "status": "error",
+                        "error": f"Failed to connect to SUT: {str(e)}"
+                    }), 500
+
+            except Exception as e:
+                logger.error(f"Error getting display resolutions for {device_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
         @app.route('/api/sut/<device_id>/action', methods=['POST'])
         def perform_sut_action(device_id):
             """Perform action on a specific SUT"""
@@ -935,7 +990,9 @@ class APIRoutes:
                 sut_ip = data.get('sut_ip')
                 game_name = data.get('game_name')
                 iterations = data.get('iterations', 1)
-                
+                quality = data.get('quality')  # 'low' | 'medium' | 'high' | 'ultra'
+                resolution = data.get('resolution')  # '720p' | '1080p' | '1440p' | '2160p'
+
                 if not sut_ip or not game_name:
                     return jsonify({"error": "sut_ip and game_name are required"}), 400
                 
@@ -1004,9 +1061,11 @@ class APIRoutes:
                         game_name=game_name,
                         sut_ip=sut_ip,
                         sut_device_id=device.unique_id,
-                        iterations=int(iterations)
+                        iterations=int(iterations),
+                        quality=quality,
+                        resolution=resolution
                     )
-                    logger.info(f"Successfully queued run {run_id}")
+                    logger.info(f"Successfully queued run {run_id} (quality={quality}, resolution={resolution})")
                     
                     return jsonify({
                         "status": "success",
@@ -1202,7 +1261,7 @@ class APIRoutes:
                 if not run_dir or not run_dir.exists():
                     return jsonify({"events": [], "message": "Run directory not found"})
 
-                timeline_file = run_dir / 'blackbox' / 'timeline.json'
+                timeline_file = run_dir / 'timeline.json'
                 if not timeline_file.exists():
                     return jsonify({"events": [], "message": "Timeline not available for this run"})
 
@@ -1237,9 +1296,194 @@ class APIRoutes:
                 
                 stats = self.run_manager.get_stats()
                 return jsonify(stats)
-                
+
             except Exception as e:
                 logger.error(f"Error getting runs stats: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        # =====================================================================
+        # Campaign Management (Multi-Game Runs)
+        # =====================================================================
+
+        @app.route('/api/campaigns', methods=['POST'])
+        def create_campaign():
+            """
+            Create a new multi-game campaign.
+
+            Request body:
+            {
+                "sut_ip": "192.168.0.102",
+                "games": ["Black Myth: Wukong", "Cyberpunk 2077", "Hitman 3"],
+                "iterations": 3,
+                "name": "Full Benchmark Suite"  // optional
+            }
+
+            Response:
+            {
+                "campaign_id": "uuid",
+                "name": "BMW-CP2-HM3",
+                "run_ids": ["uuid1", "uuid2", "uuid3"],
+                "total_games": 3,
+                "status": "queued"
+            }
+            """
+            try:
+                logger.info(f"Received create campaign request from {request.remote_addr}")
+
+                if not hasattr(self, 'campaign_manager') or self.campaign_manager is None:
+                    return jsonify({"error": "Campaign manager not available"}), 500
+
+                data = request.get_json()
+                if not data:
+                    return jsonify({"error": "Request data required"}), 400
+
+                # Validate required fields
+                sut_ip = data.get('sut_ip')
+                games = data.get('games', [])
+                iterations = data.get('iterations', 1)
+                name = data.get('name')
+                quality = data.get('quality')  # 'low' | 'medium' | 'high' | 'ultra'
+                resolution = data.get('resolution')  # '720p' | '1080p' | '1440p' | '2160p'
+
+                if not sut_ip:
+                    return jsonify({"error": "sut_ip is required"}), 400
+                if not games or not isinstance(games, list) or len(games) == 0:
+                    return jsonify({"error": "games must be a non-empty list"}), 400
+
+                # Validate SUT exists and is online
+                device = None
+                device_id = None
+
+                if self.use_external_discovery and self.discovery_client:
+                    try:
+                        suts = self.discovery_client.get_suts_sync()
+                        matching_suts = [s for s in suts if s.get("ip") == sut_ip]
+                        online_sut = next((s for s in matching_suts if s.get("status") == "online" or s.get("is_online")), None)
+
+                        if online_sut:
+                            device_id = online_sut.get("unique_id") or online_sut.get("device_id")
+                        else:
+                            # Allow offline SUTs for campaigns (runs will queue)
+                            if matching_suts:
+                                device_id = matching_suts[0].get("unique_id") or matching_suts[0].get("device_id")
+                    except Exception as e:
+                        logger.warning(f"Discovery service error: {e}")
+
+                if not device_id:
+                    device = self.device_registry.get_device_by_ip(sut_ip)
+                    if device:
+                        device_id = device.device_id
+
+                if not device_id:
+                    return jsonify({"error": f"SUT with IP {sut_ip} not found"}), 404
+
+                # Validate all games exist
+                for game in games:
+                    game_config = self.game_manager.get_game(game)
+                    if not game_config:
+                        return jsonify({"error": f"Game '{game}' not found in configurations"}), 404
+
+                # Create campaign
+                campaign = self.campaign_manager.create_campaign(
+                    sut_ip=sut_ip,
+                    sut_device_id=device_id,
+                    games=games,
+                    iterations=iterations,
+                    name=name,
+                    quality=quality,
+                    resolution=resolution
+                )
+
+                logger.info(f"Campaign created: {campaign.campaign_id} with {len(campaign.run_ids)} runs")
+
+                return jsonify({
+                    "status": "success",
+                    "campaign_id": campaign.campaign_id,
+                    "name": campaign.name,
+                    "run_ids": campaign.run_ids,
+                    "total_games": len(games),
+                    "iterations_per_game": iterations,
+                    "campaign_status": campaign.status.value,
+                    "message": f"Campaign '{campaign.name}' created with {len(games)} games"
+                })
+
+            except Exception as e:
+                logger.error(f"Error creating campaign: {e}")
+                import traceback
+                traceback.print_exc()
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/campaigns', methods=['GET'])
+        def get_campaigns():
+            """Get all campaigns (active and history)"""
+            try:
+                if not hasattr(self, 'campaign_manager') or self.campaign_manager is None:
+                    return jsonify({"active": [], "history": []})
+
+                active = [c.to_dict() for c in self.campaign_manager.get_all_campaigns()]
+                history = [c.to_dict() for c in self.campaign_manager.get_campaign_history()]
+
+                return jsonify({
+                    "active": active,
+                    "history": history
+                })
+
+            except Exception as e:
+                logger.error(f"Error getting campaigns: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/campaigns/<campaign_id>', methods=['GET'])
+        def get_campaign(campaign_id):
+            """Get specific campaign status with all runs"""
+            try:
+                if not hasattr(self, 'campaign_manager') or self.campaign_manager is None:
+                    return jsonify({"error": "Campaign manager not available"}), 500
+
+                campaign = self.campaign_manager.get_campaign(campaign_id)
+                if not campaign:
+                    # Check history
+                    for c in self.campaign_manager.get_campaign_history():
+                        if c.campaign_id == campaign_id:
+                            campaign = c
+                            break
+
+                if not campaign:
+                    return jsonify({"error": f"Campaign {campaign_id} not found"}), 404
+
+                # Get detailed run info for each run in the campaign
+                runs = []
+                for run_id in campaign.run_ids:
+                    run_data = self.run_manager.get_run_status(run_id)
+                    if run_data:
+                        runs.append(run_data)
+
+                result = campaign.to_dict()
+                result['runs'] = runs
+
+                return jsonify(result)
+
+            except Exception as e:
+                logger.error(f"Error getting campaign {campaign_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/campaigns/<campaign_id>/stop', methods=['POST'])
+        def stop_campaign(campaign_id):
+            """Stop all runs in a campaign"""
+            try:
+                if not hasattr(self, 'campaign_manager') or self.campaign_manager is None:
+                    return jsonify({"error": "Campaign manager not available"}), 500
+
+                success = self.campaign_manager.stop_campaign(campaign_id)
+                if not success:
+                    return jsonify({"error": f"Campaign {campaign_id} not found"}), 404
+
+                return jsonify({
+                    "status": "success",
+                    "message": f"Campaign {campaign_id} stopped"
+                })
+
+            except Exception as e:
+                logger.error(f"Error stopping campaign {campaign_id}: {e}")
                 return jsonify({"error": str(e)}), 500
 
         # SUT Pairing Management
