@@ -93,6 +93,38 @@ export interface AutomationRun {
   logs: LogEntry[];
   sut_info?: SUTSystemInfo | null;  // Embedded SUT metadata from manifest
   folder_name?: string | null;  // Run folder name for logs/artifacts
+  campaign_id?: string | null;  // Links to parent campaign if part of one
+  quality?: string | null;  // 'low' | 'medium' | 'high' | 'ultra'
+  resolution?: string | null;  // '720p' | '1080p' | '1440p' | '2160p'
+}
+
+// Campaign types
+export type CampaignStatus = 'queued' | 'running' | 'completed' | 'failed' | 'partially_completed' | 'stopped';
+
+export interface CampaignProgress {
+  total_games: number;
+  completed_games: number;
+  failed_games: number;
+  current_game: string | null;
+  current_game_index: number;
+}
+
+export interface Campaign {
+  campaign_id: string;
+  name: string;
+  sut_ip: string;
+  sut_device_id: string;
+  games: string[];
+  iterations_per_game: number;
+  status: CampaignStatus;
+  run_ids: string[];
+  progress: CampaignProgress;
+  created_at: string;
+  completed_at: string | null;
+  error_message: string | null;
+  runs?: AutomationRun[];  // Populated when fetching single campaign
+  quality?: string | null;  // 'low' | 'medium' | 'high' | 'ultra'
+  resolution?: string | null;  // '720p' | '1080p' | '1440p' | '2160p'
 }
 
 export interface LogEntry {
@@ -396,6 +428,26 @@ export interface PerformanceMetrics {
   cpu_temp?: number;
   gpu_temp?: number;
 }
+
+// ============================================
+// Display Resolution Types
+// ============================================
+
+export interface SutDisplayResolution {
+  width: number;
+  height: number;
+  name?: string;  // e.g., "1080p", "4K"
+}
+
+export interface SutDisplayResolutionsResponse {
+  status: string;
+  resolutions: SutDisplayResolution[];
+  device_id: string;
+}
+
+// Quality and Resolution presets
+export type QualityLevel = 'low' | 'medium' | 'high' | 'ultra';
+export type ResolutionPreset = '720p' | '1080p' | '1440p' | '2160p';
 
 // ============================================
 // Service Health Types (for dashboard)

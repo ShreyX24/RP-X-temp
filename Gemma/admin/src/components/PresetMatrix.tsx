@@ -16,6 +16,12 @@ export interface PresetAvailability {
   [quality: string]: Resolution[];
 }
 
+export interface SutDisplayResolution {
+  width: number;
+  height: number;
+  name?: string;
+}
+
 interface PresetMatrixProps {
   gameName: string;
   availablePresets: PresetAvailability;
@@ -24,6 +30,8 @@ interface PresetMatrixProps {
   selectedResolution: Resolution | null;
   onSelect: (quality: QualityLevel, resolution: Resolution) => void;
   disabled?: boolean;
+  sutResolutions?: SutDisplayResolution[];
+  loadingSutResolutions?: boolean;
 }
 
 const RESOLUTION_INFO: Record<Resolution, { width: number; height: number; name: string }> = {
@@ -72,10 +80,27 @@ export function PresetMatrix({
   selectedResolution,
   onSelect,
   disabled = false,
+  sutResolutions,
+  loadingSutResolutions = false,
 }: PresetMatrixProps) {
+  // Check if a resolution is supported by the SUT
+  const isSutSupported = useMemo(() => {
+    if (!sutResolutions || sutResolutions.length === 0) {
+      // No SUT resolution data, allow all
+      return (_res: Resolution) => true;
+    }
+
+    return (res: Resolution) => {
+      const info = RESOLUTION_INFO[res];
+      return sutResolutions.some(
+        (sr) => sr.width === info.width && sr.height === info.height
+      );
+    };
+  }, [sutResolutions]);
+
   // Determine which cells are available vs placeholder
   const cellStates = useMemo(() => {
-    const states: Record<string, 'available' | 'placeholder' | 'exceeds_max' | 'unavailable'> = {};
+    const states: Record<string, 'available' | 'placeholder' | 'exceeds_max' | 'not_supported' | 'unavailable'> = {};
 
     const maxResOrder = sutMaxResolution ? getResolutionOrder(sutMaxResolution) : 3;
 
@@ -84,7 +109,10 @@ export function PresetMatrix({
         const key = `${quality}-${resolution}`;
         const resOrder = getResolutionOrder(resolution);
 
-        if (resOrder > maxResOrder) {
+        // Check if SUT supports this resolution
+        if (!isSutSupported(resolution)) {
+          states[key] = 'not_supported';
+        } else if (resOrder > maxResOrder) {
           states[key] = 'exceeds_max';
         } else if (availablePresets[quality]?.includes(resolution)) {
           states[key] = 'available';
@@ -95,7 +123,7 @@ export function PresetMatrix({
     }
 
     return states;
-  }, [availablePresets, sutMaxResolution]);
+  }, [availablePresets, sutMaxResolution, isSutSupported]);
 
   const isSelected = (quality: QualityLevel, resolution: Resolution) =>
     selectedQuality === quality && selectedResolution === resolution;
@@ -106,6 +134,24 @@ export function PresetMatrix({
         <h3 className="font-semibold text-gray-900">Preset Selection</h3>
         <span className="text-sm text-gray-500">{gameName}</span>
       </div>
+
+      {/* Loading indicator for SUT resolutions */}
+      {loadingSutResolutions && (
+        <div className="mb-3 text-xs text-blue-500 flex items-center gap-2">
+          <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          Loading SUT display capabilities...
+        </div>
+      )}
+
+      {/* SUT Resolutions Summary */}
+      {sutResolutions && sutResolutions.length > 0 && !loadingSutResolutions && (
+        <div className="mb-3 text-xs text-gray-500">
+          SUT supports: {sutResolutions.map(r => `${r.width}×${r.height}`).join(', ')}
+        </div>
+      )}
 
       {/* Legend */}
       <div className="mb-3 flex flex-wrap gap-3 text-xs text-gray-400">
@@ -118,8 +164,12 @@ export function PresetMatrix({
           <span>Placeholder</span>
         </div>
         <div className="flex items-center gap-1">
+          <div className="h-2 w-2 rounded-[2px] bg-orange-500/30 border border-orange-500" />
+          <span>Not on SUT</span>
+        </div>
+        <div className="flex items-center gap-1">
           <div className="h-2 w-2 rounded-[2px] bg-red-500/30 border border-red-500" />
-          <span>Exceeds SUT</span>
+          <span>Exceeds Max</span>
         </div>
       </div>
 
@@ -161,6 +211,8 @@ export function PresetMatrix({
                     cellClass += `border-2 border-green-400 ${QUALITY_COLORS[quality].bg} ${!disabled ? QUALITY_COLORS[quality].hover : ''} ${!disabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`;
                   } else if (state === 'placeholder') {
                     cellClass += 'border border-dashed border-gray-300 bg-gray-50 cursor-not-allowed';
+                  } else if (state === 'not_supported') {
+                    cellClass += 'bg-orange-50 border border-orange-300 cursor-not-allowed';
                   } else if (state === 'exceeds_max') {
                     cellClass += 'bg-red-50 cursor-not-allowed';
                   }
@@ -176,6 +228,8 @@ export function PresetMatrix({
                             ? `Select ${quality} @ ${resolution}`
                             : state === 'placeholder'
                             ? 'Preset not yet configured'
+                            : state === 'not_supported'
+                            ? `SUT doesn't support ${resolution}`
                             : state === 'exceeds_max'
                             ? `Resolution exceeds SUT max (${sutMaxResolution})`
                             : 'Unavailable'
@@ -186,8 +240,8 @@ export function PresetMatrix({
                             <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                           </svg>
                         )}
-                        {state === 'exceeds_max' && !selected && (
-                          <span className="text-xs text-red-400">×</span>
+                        {(state === 'exceeds_max' || state === 'not_supported') && !selected && (
+                          <span className={`text-xs ${state === 'not_supported' ? 'text-orange-400' : 'text-red-400'}`}>×</span>
                         )}
                       </button>
                     </td>
