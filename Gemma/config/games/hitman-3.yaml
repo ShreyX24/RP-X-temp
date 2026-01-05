@@ -13,7 +13,7 @@ metadata:
   benchmark_duration: 180
   startup_wait: 30  # Increased to allow launcher -> game transition
   resolution: 1920x1080
-  preset: Ultra
+  preset: High
   engine: Glacier 2
   graphics_api: DirectX 12
   use_ocr_fallback: true  # Enable automatic OCR config fallback on detection failure
