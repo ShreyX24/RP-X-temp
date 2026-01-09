@@ -28,7 +28,7 @@ from .applier import PresetApplier
 from .discovery import DiscoveryThread
 from .ws_client import WebSocketClientThread
 from .input_controller import InputController
-from .launcher import launch_game, cancel_launch, terminate_game, get_game_status, get_current_game_info
+from .launcher import launch_game, cancel_launch, terminate_game, get_game_status, get_current_game_info, find_process_by_name
 from .window import ensure_window_foreground_v2, minimize_other_windows
 from .system import check_process, kill_process
 from .steam import login_steam, get_steam_library_folders, get_steam_auto_login_user, is_steam_running, verify_steam_login
@@ -784,7 +784,9 @@ def create_app() -> Flask:
                     }), 400
 
             # Focus the window
-            success = ensure_window_foreground_v2(pid, timeout=3)
+            # Skip pywinauto for games - it hangs on fullscreen exclusive mode
+            # Win32 method is faster and more reliable for game windows
+            success = ensure_window_foreground_v2(pid, timeout=3, use_pywinauto=False)
 
             # Optionally minimize other windows
             minimized_count = 0
