@@ -74,28 +74,25 @@ def find_process_by_name(process_name: str, exact_only: bool = False, debug_log_
     search_term = process_name.lower().replace('.exe', '')  # e.g., "rdr2"
 
     try:
-        # Use fresh PID list to avoid any caching issues
-        for pid in psutil.pids():
+        # Use process_iter with field selection (same as system.py - proven to work)
+        for proc in psutil.process_iter(['pid', 'name', 'exe']):
             try:
-                proc = psutil.Process(pid)
-                proc_name = proc.name()
-                try:
-                    proc_exe = os.path.basename(proc.exe()) if proc.exe() else None
-                except (psutil.AccessDenied, psutil.NoSuchProcess):
-                    proc_exe = None
+                proc_name = proc.info['name']
+                proc_exe = os.path.basename(proc.info['exe']) if proc.info['exe'] else None
+                pid = proc.info['pid']
 
                 if exact_only:
                     # EXACT match only (case-insensitive)
                     if (proc_name and proc_name.lower() == process_name.lower()) or \
                        (proc_exe and proc_exe.lower() == process_name.lower()):
                         logger.info(f"[EXACT] Found process: {proc_name} (PID: {pid})")
-                        return proc
+                        return psutil.Process(pid)
                 else:
-                    # Partial/substring match (like old gemma_client_0.2.py)
+                    # Partial/substring match (case-insensitive)
                     if (proc_name and process_name.lower() in proc_name.lower()) or \
                        (proc_exe and process_name.lower() in proc_exe.lower()):
                         logger.info(f"[SUBSTRING] Found process: {proc_name} (PID: {pid})")
-                        return proc
+                        return psutil.Process(pid)
 
                 # Track similar processes for debugging
                 if debug_log_similar and proc_name:
@@ -501,9 +498,26 @@ def launch_game(
                 logger.info(f"Process found after {elapsed}s (check #{check_count}): {actual_process.name()} (PID: {actual_process.pid})")
                 break
 
-            # Log progress every 10s
+            # Log progress every 10s with process scan
             if elapsed > 0 and elapsed % 10 == 0 and elapsed != last_log_time:
                 logger.info(f"Still waiting for '{current_game_process_name}'... ({elapsed}s/{max_wait_time}s, check #{check_count})")
+                # Log any RDR/Rockstar processes we can see
+                try:
+                    import psutil
+                    rockstar_procs = []
+                    for p in psutil.process_iter(['pid', 'name']):
+                        try:
+                            pname = p.info['name'].lower()
+                            if 'rdr' in pname or 'rockstar' in pname or 'launcher' in pname or 'social' in pname:
+                                rockstar_procs.append(f"{p.info['name']}({p.info['pid']})")
+                        except:
+                            pass
+                    if rockstar_procs:
+                        logger.info(f"  Rockstar processes visible: {', '.join(rockstar_procs)}")
+                    else:
+                        logger.info(f"  No Rockstar/RDR processes visible yet")
+                except Exception as e:
+                    logger.warning(f"  Could not scan processes: {e}")
                 last_log_time = elapsed
 
             if launch_cancel_flag.wait(timeout=2):  # Poll every 2s (faster than 3s)
@@ -541,7 +555,7 @@ def launch_game(
                             "pywinauto_available": is_pywinauto_available(),
                         }
                         logger.info(f"[OK] Launch Complete (fast path): {actual_process.name()} already in foreground.")
-                        minimized = minimize_other_windows(actual_process.pid)
+                        minimized = minimize_other_windows(actual_process.pid, exclude_process_name=current_game_process_name)
                         response_data["windows_minimized"] = minimized
                         return response_data
             except Exception as e:
@@ -589,7 +603,8 @@ def launch_game(
             logger.info("Attempting to bring window to foreground...")
 
             # Try modern method first (5s max)
-            foreground_confirmed = ensure_window_foreground_v2(actual_process.pid, timeout=5)
+            # Skip pywinauto - it hangs on fullscreen games
+            foreground_confirmed = ensure_window_foreground_v2(actual_process.pid, timeout=5, use_pywinauto=False)
 
             if not foreground_confirmed:
                 # Try legacy method once (5s max)
@@ -600,8 +615,8 @@ def launch_game(
             if not foreground_confirmed:
                 logger.info("Foreground not confirmed, but process is running - continuing (startup_wait will handle)")
 
-            # Minimize other windows to help with focus
-            minimize_other_windows(actual_process.pid)
+            # Minimize other windows to help with focus (but not the game process itself)
+            minimize_other_windows(actual_process.pid, exclude_process_name=current_game_process_name)
 
             # Always return success if process is running - startup_wait handles the rest
             response_data = {

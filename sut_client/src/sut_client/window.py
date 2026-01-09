@@ -376,7 +376,7 @@ def is_pywinauto_available() -> bool:
     return PYWINAUTO_AVAILABLE
 
 
-def minimize_other_windows(target_pid: int, exclude_titles: list = None) -> int:
+def minimize_other_windows(target_pid: int, exclude_titles: list = None, exclude_process_name: str = None) -> int:
     """
     Minimize all visible windows except the target process and system windows.
 
@@ -386,6 +386,7 @@ def minimize_other_windows(target_pid: int, exclude_titles: list = None) -> int:
     Args:
         target_pid: Process ID of the game to keep visible
         exclude_titles: Additional window titles to exclude from minimizing
+        exclude_process_name: Process name pattern to exclude (e.g., "RDR2" will exclude RDR2.exe)
 
     Returns:
         int: Number of windows minimized
@@ -402,6 +403,25 @@ def minimize_other_windows(target_pid: int, exclude_titles: list = None) -> int:
         "",  # No title
     ]
     exclude_titles.extend(system_titles)
+
+    # Build list of PIDs to exclude based on process name pattern
+    exclude_pids = {target_pid}
+    if exclude_process_name:
+        # Remove .exe suffix for matching
+        name_pattern = exclude_process_name.lower().replace('.exe', '')
+        try:
+            import psutil
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    proc_name = proc.info['name'].lower().replace('.exe', '')
+                    # Match if process name contains our pattern or vice versa
+                    if name_pattern in proc_name or proc_name in name_pattern:
+                        exclude_pids.add(proc.info['pid'])
+                        logger.debug(f"Excluding process by name: {proc.info['name']} (PID {proc.info['pid']})")
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except Exception as e:
+            logger.warning(f"Could not scan processes for exclusion: {e}")
 
     minimized_count = 0
 
@@ -420,9 +440,9 @@ def minimize_other_windows(target_pid: int, exclude_titles: list = None) -> int:
             _, window_pid = win32process.GetWindowThreadProcessId(hwnd)
             title = win32gui.GetWindowText(hwnd)
 
-            # Skip target process
-            if window_pid == target_pid:
-                logger.debug(f"Keeping target window: '{title}' (PID {window_pid})")
+            # Skip target process and any processes matching excluded names
+            if window_pid in exclude_pids:
+                logger.debug(f"Keeping excluded window: '{title}' (PID {window_pid})")
                 return True
 
             # Skip excluded titles
