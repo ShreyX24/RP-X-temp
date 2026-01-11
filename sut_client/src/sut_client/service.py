@@ -671,8 +671,11 @@ def create_app() -> Flask:
             # Support both 'process_name' and 'process_id' (Gemma sends process_id)
             process_name = data.get('process_name') or data.get('process_id')
             force_relaunch = data.get('force_relaunch', False)
-            startup_wait = data.get('startup_wait', 30)  # Default 30 seconds
+            startup_wait = data.get('startup_wait', 30)  # Post-launch initialization wait
             launch_args = data.get('launch_args')  # Command-line arguments for game
+            # Process detection timeout - how long to wait for game process to appear
+            # This is separate from startup_wait (which is for post-launch initialization)
+            process_timeout = data.get('process_detection_timeout', 90)  # Default 90s for process to spawn
 
             # Handle legacy 'path' parameter - could be exe path or Steam App ID
             if not steam_app_id and not exe_path and legacy_path:
@@ -707,7 +710,7 @@ def create_app() -> Flask:
                 launch_args=launch_args,
                 retry_count=retry_count,
                 retry_interval=retry_interval,
-                process_detection_timeout=startup_wait  # Use startup_wait for process detection timeout
+                process_detection_timeout=process_timeout  # Time to wait for process to appear (default 90s)
             )
 
             return jsonify(result)
