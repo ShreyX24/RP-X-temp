@@ -8,10 +8,10 @@ metadata:
   steam_app_id: '2488620'
   path: "2488620"
   process_id: "F1_24"
-  launch_args: "-benchmark example_benchmark.xml"  # Command-line benchmark mode
+  launch_args: "-benchmark example_benchmark"  # Command-line benchmark mode
   version: "1.0"
   benchmark_duration: 400  # Benchmark takes ~350s
-  startup_wait: 5  # Short wait - Steam dialog appears quickly
+  startup_wait: 30  # Wait for game to initialize after launch
   resolution: "1920x1080"
   preset: "High"
 
