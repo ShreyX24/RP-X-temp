@@ -70,7 +70,7 @@ def create_app() -> Flask:
             "device_id": settings.device_id,
             "hostname": settings.hostname,
             "version": "0.3.0",
-            "gemma_sut_signature": "gemma_sut_v3",
+            "rpx_sut_signature": "rpx_sut_v1",
             "capabilities": [
                 "preset_application",
                 "backup_restore",

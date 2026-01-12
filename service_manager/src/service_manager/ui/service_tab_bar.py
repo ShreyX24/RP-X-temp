@@ -175,8 +175,8 @@ class ServiceTab(QFrame):
         short_names = {
             "sut-discovery": "SUT",
             "queue-service": "Queue",
-            "gemma-backend": "Gemma",
-            "gemma-frontend": "Frontend",
+            "rpx-backend": "RPX",
+            "rpx-frontend": "Frontend",
             "preset-manager": "Presets",
             "pm-frontend": "PM-UI",
         }

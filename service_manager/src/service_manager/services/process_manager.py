@@ -28,7 +28,7 @@ from ..config import ServiceConfig, get_services, create_omniparser_config, OMNI
 from ..settings import get_settings_manager
 
 # Restart requests file (shared with Admin Panel)
-RESTART_REQUESTS_FILE = Path.home() / ".gemma" / "restart_requests.json"
+RESTART_REQUESTS_FILE = Path.home() / ".rpx" / "restart_requests.json"
 
 
 class ProcessState(Enum):
@@ -342,10 +342,13 @@ class ProcessWrapper(QObject):
             # On Windows, kill entire process tree using taskkill
             # This is critical for npm/vite which spawn child processes
             try:
+                # CREATE_NO_WINDOW flag prevents console window from flashing
+                creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
                 result = subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(pid)],
                     capture_output=True,
-                    timeout=10
+                    timeout=10,
+                    creationflags=creationflags
                 )
                 if result.returncode == 0:
                     self.output_received.emit(self.config.name, f"Killed process tree (PID {pid})\n")
@@ -748,8 +751,8 @@ class ProcessManager(QObject):
                 env_overrides["OMNIPARSER_URLS"] = omniparser_urls
                 self._log_buffer.append(name, f"OmniParser URLs: {omniparser_urls}\n", False)
 
-        # Special handling for gemma-backend
-        if name == "gemma-backend":
+        # Special handling for rpx-backend
+        if name == "rpx-backend":
             settings = get_settings_manager()
             steam_accounts = settings.get_steam_accounts_env()
             if steam_accounts:

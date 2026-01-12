@@ -63,9 +63,9 @@ class FlowDiagramWidget(QWidget):
 
         # Define service nodes - cleaner horizontal flow layout
         self._nodes: Dict[str, ServiceNode] = {
-            # Left column - Gemma stack (frontends below backends)
-            "gemma-backend": ServiceNode("gemma-backend", "Gemma Backend", 0.02, 0.05),
-            "gemma-frontend": ServiceNode("gemma-frontend", "Gemma Frontend", 0.02, 0.30),
+            # Left column - RPX stack (frontends below backends)
+            "rpx-backend": ServiceNode("rpx-backend", "RPX Backend", 0.02, 0.05),
+            "rpx-frontend": ServiceNode("rpx-frontend", "RPX Frontend", 0.02, 0.30),
             # Middle column - Preset Manager stack
             "preset-manager": ServiceNode("preset-manager", "Preset Manager", 0.35, 0.05),
             "pm-frontend": ServiceNode("pm-frontend", "PM Frontend", 0.35, 0.30),
@@ -80,10 +80,10 @@ class FlowDiagramWidget(QWidget):
 
         # Define connections between services
         self._connections: List[Connection] = [
-            Connection("gemma-frontend", "gemma-backend", ""),
+            Connection("rpx-frontend", "rpx-backend", ""),
             Connection("pm-frontend", "preset-manager", ""),
-            Connection("gemma-backend", "preset-manager", ""),
-            Connection("gemma-backend", "queue-service", ""),  # Now horizontal!
+            Connection("rpx-backend", "preset-manager", ""),
+            Connection("rpx-backend", "queue-service", ""),  # Now horizontal!
             Connection("preset-manager", "sut-discovery", ""),
         ]
 

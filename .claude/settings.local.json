@@ -34,7 +34,13 @@
       "Bash(git show:*)",
       "Bash(pip show:*)",
       "WebSearch",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(git add:*)",
+      "Bash(npx tsc:*)",
+      "Bash(grep:*)",
+      "Bash(done)",
+      "Bash(for f in \"C:\\\\Users\\\\shrey\\\\OneDrive\\\\Documents\\\\Code\\\\Gemma\\\\RPX\\\\Gemma\\\\logs\\\\runs\\\\2026-01-06_FC6-SOT_192-168-0-106\"/*/manifest.json)",
+      "Bash(do grep -E '\"\"campaign_id\"\"|\"\"run_id\"\"' \"$f\")"
     ]
   }
 }

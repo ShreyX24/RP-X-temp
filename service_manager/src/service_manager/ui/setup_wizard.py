@@ -19,7 +19,7 @@ class WelcomePage(QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Welcome to Gemma Service Manager")
+        self.setTitle("Welcome to RPX Service Manager")
         self.setSubTitle("Let's configure your services.")
 
         layout = QVBoxLayout(self)
@@ -227,7 +227,7 @@ class SetupWizard(QWizard):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Gemma Service Manager Setup")
+        self.setWindowTitle("RPX Service Manager Setup")
         self.setWizardStyle(QWizard.ModernStyle)
         self.setMinimumSize(600, 700)
         self.resize(650, 750)

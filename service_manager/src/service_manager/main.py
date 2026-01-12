@@ -18,8 +18,8 @@ def main():
     )
     
     app = QApplication(sys.argv)
-    app.setApplicationName("Gemma Service Manager")
-    app.setOrganizationName("Gemma")
+    app.setApplicationName("RPX Service Manager")
+    app.setOrganizationName("RaptorX")
     
     # Set default font
     font = QFont("Segoe UI", 9)

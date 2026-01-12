@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pml-sut-client"
 version = "0.3.0"
-description = "KATANA SUT Client - Gaming Automation Service (Preset Manager + Gemma v0.2)"
+description = "Raptor X SUT Client - Gaming Automation Service"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -36,7 +36,7 @@ dependencies = [
     "orjson>=3.9.0",
     "websockets>=12.0",
     "wmi>=1.5.1",
-    # From KATANA Gemma v0.2 - Window detection
+    # Window detection
     "pywinauto>=0.6.8",
 ]
 
