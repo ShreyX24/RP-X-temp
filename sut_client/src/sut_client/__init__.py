@@ -1,7 +1,7 @@
 """
-PML SUT Client (KATANA Edition)
+RPX SUT Client
 System Under Test client for receiving and applying game configuration presets
-Merged with KATANA Gemma v0.2 game launch and input automation features
+Game launch and input automation for Raptor X platform
 """
 
 import argparse
@@ -9,19 +9,57 @@ import sys
 import logging
 
 __version__ = "0.3.0"
-__author__ = "PML Team + KATANA Team"
+__author__ = "RPX Team"
 
-# KATANA ASCII Banner
-KATANA_BANNER = r"""
- _  __    _  _____  _    _   _    _
-| |/ /   / \|_   _|/ \  | \ | |  / \
-| ' /   / _ \ | | / _ \ |  \| | / _ \
-| . \  / ___ \| |/ ___ \| |\  |/ ___ \
-|_|\_\/_/   \_\_/_/   \_\_| \_/_/   \_\
+# RAPTOR X ASCII Banner (with purple-to-white gradient)
+RPX_BANNER_LINES = [
+    "██████╗  █████╗ ██████╗ ████████╗ ██████╗ ██████╗     ██╗  ██╗",
+    "██╔══██╗██╔══██╗██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗    ╚██╗██╔╝",
+    "██████╔╝███████║██████╔╝   ██║   ██║   ██║██████╔╝     ╚███╔╝",
+    "██╔══██╗██╔══██║██╔═══╝    ██║   ██║   ██║██╔══██╗     ██╔██╗",
+    "██║  ██║██║  ██║██║        ██║   ╚██████╔╝██║  ██║    ██╔╝ ██╗",
+    "╚═╝  ╚═╝╚═╝  ╚═╝╚═╝        ╚═╝    ╚═════╝ ╚═╝  ╚═╝    ╚═╝  ╚═╝",
+]
 
-       SUT Client v{version}
-    Preset Manager + Gemma v0.2
-"""
+# ANSI 256-color gradient: purple (93) -> light purple -> white (231)
+GRADIENT_COLORS = [93, 135, 141, 183, 189, 231]
+RESET = "\033[0m"
+
+
+def _enable_windows_ansi():
+    """Enable ANSI escape sequences on Windows Command Prompt"""
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # Get handle to stdout
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        # Get current console mode
+        mode = ctypes.c_ulong()
+        kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+        # Enable ENABLE_VIRTUAL_TERMINAL_PROCESSING (0x0004)
+        kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+        return True
+    except Exception:
+        return False
+
+
+def print_banner(version: str):
+    """Print the RAPTOR X banner with purple-to-white gradient"""
+    # Enable ANSI colors on Windows
+    _enable_windows_ansi()
+
+    print()  # Empty line before banner
+    for i, line in enumerate(RPX_BANNER_LINES):
+        color_code = GRADIENT_COLORS[i] if i < len(GRADIENT_COLORS) else 231
+        print(f"\033[38;5;{color_code}m{line}{RESET}")
+    print()
+    # Version line in white
+    version_text = f"SUT Client v{version}"
+    padding = (len(RPX_BANNER_LINES[0]) - len(version_text)) // 2
+    print(f"\033[97m{' ' * padding}{version_text}{RESET}")
+    print()
 
 
 def _set_window_title(title: str):
@@ -237,7 +275,7 @@ def main():
     """Main entry point for the SUT client"""
     # Parse arguments first (before admin elevation so args are passed through)
     parser = argparse.ArgumentParser(
-        description="KATANA SUT Client - System Under Test client for preset management and game automation",
+        description="Raptor X SUT Client - System Under Test client for preset management and game automation",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
@@ -318,8 +356,8 @@ def main():
     # Set window title
     _set_window_title("sut-client")
 
-    # Print KATANA banner
-    print(KATANA_BANNER.format(version=__version__))
+    # Print RAPTOR X banner with gradient
+    print_banner(__version__)
 
     # Set up logging level based on --debug flag
     if args.debug:

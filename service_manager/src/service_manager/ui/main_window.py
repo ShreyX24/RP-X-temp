@@ -24,7 +24,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Gemma Service Manager")
+        self.setWindowTitle("RPX Service Manager")
 
         # Initialize settings
         self._init_settings()
@@ -333,7 +333,7 @@ class MainWindow(QMainWindow):
 
     def _collapse_frontend_panels(self):
         """Collapse frontend log panels to header only when dashboard is shown"""
-        frontend_services = ["gemma-frontend", "pm-frontend"]
+        frontend_services = ["rpx-frontend", "pm-frontend"]
         for name in frontend_services:
             panel = self.log_container.get_panel(name)
             if panel:
@@ -343,7 +343,7 @@ class MainWindow(QMainWindow):
 
     def _expand_frontend_panels(self):
         """Restore frontend log panels to full size"""
-        frontend_services = ["gemma-frontend", "pm-frontend"]
+        frontend_services = ["rpx-frontend", "pm-frontend"]
         for name in frontend_services:
             panel = self.log_container.get_panel(name)
             if panel:

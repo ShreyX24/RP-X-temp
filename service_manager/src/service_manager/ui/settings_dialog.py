@@ -33,7 +33,7 @@ class GeneralTab(QWidget):
         project_layout = QVBoxLayout(project_group)
 
         project_desc = QLabel(
-            "Base directory containing all Gemma services (Gemma, preset-manager, queue_service, etc.).\n"
+            "Base directory containing all Raptor X services (RPX, preset-manager, queue_service, etc.).\n"
             "All service working directories are relative to this path."
         )
         project_desc.setWordWrap(True)
@@ -42,7 +42,7 @@ class GeneralTab(QWidget):
 
         project_path_layout = QHBoxLayout()
         self.project_dir_edit = QLineEdit()
-        self.project_dir_edit.setPlaceholderText("e.g., C:/Users/user/Code/Gemma-e2e")
+        self.project_dir_edit.setPlaceholderText("e.g., C:/Users/user/Code/RPX")
         project_path_layout.addWidget(self.project_dir_edit)
 
         self.project_browse_btn = QPushButton("Browse...")

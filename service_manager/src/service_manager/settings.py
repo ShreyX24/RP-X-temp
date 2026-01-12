@@ -10,7 +10,7 @@ import os
 
 
 # Config file location
-CONFIG_DIR = Path.home() / ".gemma"
+CONFIG_DIR = Path.home() / ".rpx"
 CONFIG_FILE = CONFIG_DIR / "service_manager_config.json"
 
 

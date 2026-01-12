@@ -1,5 +1,5 @@
 """
-Gemma Service Manager - GUI for managing all Gemma services
+RPX Service Manager - GUI for managing all Raptor X services
 """
 
 from .main import main
