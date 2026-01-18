@@ -67,3 +67,4 @@ tmpclaude-*
 # Runtime temp data
 run_status.json
 runs_temp.json
+tmpclaude-*
