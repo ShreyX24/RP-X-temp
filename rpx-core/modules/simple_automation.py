@@ -1,6 +1,7 @@
 """
 Enhanced simple step-by-step automation module with fully modular action system.
 Supports all human input types: clicks, keys, text, drag/drop, scroll, etc.
+Includes hooks, sideload, and tracing support for SOCWatch/PTAT.
 """
 
 import os
@@ -8,10 +9,32 @@ import time
 import logging
 import yaml
 from typing import List, Dict, Any, Optional, Union
+from datetime import datetime
 
 from modules.gemma_client import BoundingBox
 
 logger = logging.getLogger(__name__)
+
+# Default tracing agent configurations
+DEFAULT_TRACING_AGENTS = {
+    "socwatch": {
+        "path": r"C:\OWR\socwatch\64\socwatch64.exe",
+        "args": [
+            "-f", "sys", "-f", "bw", "-f", "cpu", "-f", "power",
+            "-f", "gfx", "-f", "temp", "-o", "trace"
+        ],
+        "runs_indefinitely": True,  # SOCWatch runs until terminated
+    },
+    "ptat": {
+        "path": r"C:\OWR\PTAT\PTAT.exe",
+        "args": ["-log", "-csv", "-l=1", "-ts", "-i=1000"],
+        "runs_indefinitely": False,  # PTAT needs -t=<duration>
+        "duration_arg": "-t=",  # Arg format for duration
+    },
+}
+
+# Default trace output directory on SUT
+DEFAULT_TRACE_OUTPUT_DIR = r"C:\Documents\traces"
 
 class SimpleAutomation:
     """Fully modular step-by-step automation with comprehensive action support."""
@@ -52,6 +75,7 @@ class SimpleAutomation:
         # Game metadata with enhanced support
         self.game_name = self.config.get("metadata", {}).get("game_name", "Unknown Game")
         self.process_id = self.config.get("metadata", {}).get("process_id")
+        self.process_name = self.config.get("metadata", {}).get("process_name") or self.process_id
         self.run_dir = run_dir or f"logs/{self.game_name}"
         
         # Enhanced features
@@ -74,7 +98,22 @@ class SimpleAutomation:
         
         # Optional step handlers
         self.optional_steps = self.config.get("optional_steps", {})
-        
+
+        # Hooks configuration (pre/post run scripts)
+        self.hooks = self.config.get("hooks", {})
+
+        # Tracing configuration
+        self.tracing_config = self.config.get("metadata", {}).get("tracing", {})
+        self.tracing_enabled = self.tracing_config.get("enabled", False) if isinstance(self.tracing_config, dict) else bool(self.tracing_config)
+        self.tracing_agents = self.tracing_config.get("agents", ["socwatch", "ptat"]) if isinstance(self.tracing_config, dict) else ["socwatch", "ptat"]
+        self.trace_output_dir = self.tracing_config.get("output_dir", DEFAULT_TRACE_OUTPUT_DIR) if isinstance(self.tracing_config, dict) else DEFAULT_TRACE_OUTPUT_DIR
+
+        # Track persistent processes (tracing agents, persistent hooks)
+        self.persistent_processes: Dict[str, int] = {}  # {agent_name: pid}
+
+        # Run ID for trace output organization
+        self.run_id = self.config.get("metadata", {}).get("run_id") or datetime.now().strftime("%Y%m%d_%H%M%S")
+
         logger.info(f"SimpleAutomation initialized for {self.game_name}")
         if self.process_id:
             logger.info(f"Process ID tracking enabled: {self.process_id}")
@@ -124,6 +163,353 @@ class SimpleAutomation:
             except Exception as e:
                 logger.warning(f"Failed to save OCR configs: {e}")
 
+    # =========================================================================
+    # TRACING SUPPORT (SOCWatch, PTAT)
+    # =========================================================================
+
+    def _start_tracing(self, duration: int, tracing_config: Dict = None) -> bool:
+        """
+        Start tracing agents before benchmark execution.
+
+        Args:
+            duration: Benchmark duration in seconds (for PTAT -t argument)
+            tracing_config: Optional per-step tracing config (overrides defaults)
+
+        Returns:
+            True if all agents started successfully
+        """
+        if not self.tracing_enabled and not tracing_config:
+            return True
+
+        # Determine which agents to start
+        config = tracing_config or {}
+        agents = config.get("agents", self.tracing_agents)
+        if isinstance(agents, bool) and agents:
+            agents = ["socwatch", "ptat"]
+        elif not agents:
+            return True
+
+        logger.info(f"Starting tracing agents: {agents}")
+
+        # Create run-specific trace directory path on SUT
+        trace_dir = f"{self.trace_output_dir}\\{self.run_id}"
+
+        success = True
+        for agent_name in agents:
+            if agent_name not in DEFAULT_TRACING_AGENTS:
+                logger.warning(f"Unknown tracing agent: {agent_name}")
+                continue
+
+            agent_config = DEFAULT_TRACING_AGENTS[agent_name]
+            path = config.get(f"{agent_name}_path", agent_config["path"])
+            args = list(agent_config.get("args", []))
+
+            # Add duration argument for PTAT
+            if not agent_config.get("runs_indefinitely") and agent_config.get("duration_arg"):
+                duration_arg = agent_config["duration_arg"]
+                args.insert(0, f"{duration_arg}{duration}")
+
+            # Add output directory
+            if agent_name == "socwatch":
+                # SOCWatch: -r <output_dir>
+                args.extend(["-r", trace_dir])
+            elif agent_name == "ptat":
+                # PTAT: -logdir=<output_dir>
+                args.append(f"-logdir={trace_dir}")
+
+            try:
+                result = self.network.execute_command(
+                    path=path,
+                    args=args,
+                    async_exec=True  # Start and return immediately
+                )
+
+                if result.get("status") == "started":
+                    pid = result.get("pid")
+                    self.persistent_processes[agent_name] = pid
+                    logger.info(f"Started {agent_name} with PID {pid}")
+                else:
+                    logger.error(f"Failed to start {agent_name}: {result.get('message')}")
+                    success = False
+
+            except Exception as e:
+                logger.error(f"Error starting {agent_name}: {e}")
+                success = False
+
+        return success
+
+    def _stop_tracing(self) -> bool:
+        """
+        Stop all running tracing agents.
+
+        Returns:
+            True if all agents stopped successfully
+        """
+        if not self.persistent_processes:
+            return True
+
+        logger.info("Stopping tracing agents...")
+
+        success = True
+        for agent_name, pid in list(self.persistent_processes.items()):
+            try:
+                result = self.network.terminate_process_by_pid(pid)
+                if result.get("terminated"):
+                    logger.info(f"Stopped {agent_name} (PID {pid})")
+                    del self.persistent_processes[agent_name]
+                else:
+                    logger.warning(f"Failed to stop {agent_name} (PID {pid})")
+                    success = False
+            except Exception as e:
+                logger.error(f"Error stopping {agent_name}: {e}")
+                success = False
+
+        return success
+
+    def _is_benchmark_step(self, action_config: Dict, step: Dict) -> bool:
+        """
+        Determine if a step is a benchmark step that should have tracing.
+
+        A step is a benchmark step if:
+        - action.type is "wait" AND
+        - action.duration >= 30 seconds AND
+        - (step has tracing config OR game-level tracing is enabled)
+        """
+        if not isinstance(action_config, dict):
+            return False
+
+        action_type = action_config.get("type", "").lower()
+        duration = action_config.get("duration", 0)
+
+        if action_type != "wait" or duration < 30:
+            return False
+
+        # Check for step-level tracing config
+        step_tracing = step.get("tracing", {})
+        if step_tracing:
+            if isinstance(step_tracing, bool):
+                return step_tracing
+            return step_tracing.get("enabled", True)
+
+        # Fall back to game-level tracing
+        return self.tracing_enabled
+
+    # =========================================================================
+    # HOOKS AND SIDELOAD EXECUTION
+    # =========================================================================
+
+    def _execute_pre_hooks(self) -> bool:
+        """
+        Execute non-persistent pre-hooks before automation starts.
+
+        Returns:
+            True if all hooks executed successfully
+        """
+        pre_hooks = self.hooks.get("pre", [])
+        if not pre_hooks:
+            return True
+
+        logger.info(f"Executing {len(pre_hooks)} pre-hooks...")
+
+        for i, hook in enumerate(pre_hooks):
+            if hook.get("persistent", False):
+                continue  # Skip persistent hooks, handled separately
+
+            path = hook.get("path")
+            args = hook.get("args", [])
+            timeout = hook.get("timeout", 60)
+
+            if not path:
+                logger.warning(f"Pre-hook {i} missing 'path', skipping")
+                continue
+
+            logger.info(f"Running pre-hook: {path}")
+
+            try:
+                result = self.network.execute_command(
+                    path=path,
+                    args=args,
+                    timeout=timeout,
+                    async_exec=False
+                )
+
+                if result.get("status") != "success":
+                    logger.warning(f"Pre-hook failed: {result.get('stderr', result.get('message'))}")
+                    # Don't fail automation for hook failure unless marked critical
+                    if hook.get("critical", False):
+                        return False
+            except Exception as e:
+                logger.error(f"Pre-hook error: {e}")
+                if hook.get("critical", False):
+                    return False
+
+        return True
+
+    def _start_persistent_hooks(self) -> bool:
+        """
+        Start persistent hooks (run throughout automation).
+
+        Returns:
+            True if all hooks started successfully
+        """
+        pre_hooks = self.hooks.get("pre", [])
+
+        for i, hook in enumerate(pre_hooks):
+            if not hook.get("persistent", False):
+                continue
+
+            path = hook.get("path")
+            args = hook.get("args", [])
+
+            if not path:
+                logger.warning(f"Persistent hook {i} missing 'path', skipping")
+                continue
+
+            hook_id = hook.get("id", f"hook_{i}")
+            logger.info(f"Starting persistent hook '{hook_id}': {path}")
+
+            try:
+                result = self.network.execute_command(
+                    path=path,
+                    args=args,
+                    async_exec=True
+                )
+
+                if result.get("status") == "started":
+                    self.persistent_processes[hook_id] = result.get("pid")
+                    logger.info(f"Started persistent hook '{hook_id}' with PID {result.get('pid')}")
+                else:
+                    logger.warning(f"Failed to start persistent hook '{hook_id}'")
+            except Exception as e:
+                logger.error(f"Error starting persistent hook: {e}")
+
+        return True
+
+    def _stop_persistent_hooks(self) -> bool:
+        """
+        Stop all persistent hooks.
+
+        Returns:
+            True if all hooks stopped successfully
+        """
+        # persistent_processes contains both tracing agents and hooks
+        # _stop_tracing handles tracing agents, this handles hooks
+        hooks_to_stop = [name for name in self.persistent_processes.keys()
+                        if name.startswith("hook_") or name not in DEFAULT_TRACING_AGENTS]
+
+        if not hooks_to_stop:
+            return True
+
+        logger.info(f"Stopping {len(hooks_to_stop)} persistent hooks...")
+
+        success = True
+        for hook_id in hooks_to_stop:
+            pid = self.persistent_processes.get(hook_id)
+            if pid:
+                try:
+                    result = self.network.terminate_process_by_pid(pid)
+                    if result.get("terminated"):
+                        logger.info(f"Stopped hook '{hook_id}' (PID {pid})")
+                        del self.persistent_processes[hook_id]
+                    else:
+                        logger.warning(f"Failed to stop hook '{hook_id}'")
+                        success = False
+                except Exception as e:
+                    logger.error(f"Error stopping hook '{hook_id}': {e}")
+                    success = False
+
+        return success
+
+    def _execute_post_hooks(self) -> bool:
+        """
+        Execute post-hooks after automation completes.
+
+        Returns:
+            True if all hooks executed successfully
+        """
+        post_hooks = self.hooks.get("post", [])
+        if not post_hooks:
+            return True
+
+        logger.info(f"Executing {len(post_hooks)} post-hooks...")
+
+        success = True
+        for i, hook in enumerate(post_hooks):
+            path = hook.get("path")
+            args = hook.get("args", [])
+            timeout = hook.get("timeout", 120)
+
+            if not path:
+                logger.warning(f"Post-hook {i} missing 'path', skipping")
+                continue
+
+            logger.info(f"Running post-hook: {path}")
+
+            try:
+                result = self.network.execute_command(
+                    path=path,
+                    args=args,
+                    timeout=timeout,
+                    async_exec=False
+                )
+
+                if result.get("status") != "success":
+                    logger.warning(f"Post-hook failed: {result.get('stderr', result.get('message'))}")
+                    success = False
+            except Exception as e:
+                logger.error(f"Post-hook error: {e}")
+                success = False
+
+        return success
+
+    def _execute_sideload(self, sideload_config: Dict) -> bool:
+        """
+        Execute a sideload script for a step.
+
+        Args:
+            sideload_config: Sideload configuration from step
+
+        Returns:
+            True if sideload executed successfully
+        """
+        path = sideload_config.get("path")
+        args = sideload_config.get("args", [])
+        timeout = sideload_config.get("timeout", 300)
+        wait_for_completion = sideload_config.get("wait_for_completion", True)
+
+        if not path:
+            logger.warning("Sideload missing 'path', skipping")
+            return True
+
+        logger.info(f"Executing sideload: {path}")
+
+        try:
+            result = self.network.execute_command(
+                path=path,
+                args=args,
+                timeout=timeout,
+                async_exec=not wait_for_completion
+            )
+
+            if wait_for_completion:
+                if result.get("status") == "success":
+                    logger.info("Sideload completed successfully")
+                    return True
+                else:
+                    logger.warning(f"Sideload failed: {result.get('stderr', result.get('message'))}")
+                    return False
+            else:
+                if result.get("status") == "started":
+                    logger.info(f"Sideload started with PID {result.get('pid')}")
+                    return True
+                else:
+                    logger.warning(f"Failed to start sideload: {result.get('message')}")
+                    return False
+
+        except Exception as e:
+            logger.error(f"Sideload error: {e}")
+            return False
+
     def _execute_fallback(self):
         """Execute fallback action when step fails."""
         fallback = self.config.get("fallbacks", {}).get("general", {})
@@ -143,18 +529,35 @@ class SimpleAutomation:
         """Run the enhanced step-by-step automation with optional step handling."""
         # Get steps from configuration
         steps = self.config.get("steps", {})
-        
+
         if not steps:
             logger.error("No steps defined in configuration")
             return False
-        
+
         # Convert all step keys to strings to handle both integer and string keys
         normalized_steps = {}
         for key, value in steps.items():
             normalized_steps[str(key)] = value
         steps = normalized_steps
-        
+
         logger.info(f"Starting enhanced automation with {len(steps)} steps")
+
+        # =====================================================================
+        # EXECUTE PRE-HOOKS (non-persistent, wait for completion)
+        # =====================================================================
+        if self.hooks.get("pre"):
+            logger.info("=========================================================")
+            logger.info("RUNNING PRE-HOOKS")
+            logger.info("=========================================================")
+            if not self._execute_pre_hooks():
+                logger.error("Critical pre-hook failed, aborting automation")
+                return False
+
+        # =====================================================================
+        # START PERSISTENT HOOKS (run throughout automation)
+        # =====================================================================
+        if self.hooks.get("pre"):
+            self._start_persistent_hooks()
 
         # Update total steps in progress callback (for X/Y display in GUI)
         if self.progress_callback:
@@ -211,13 +614,15 @@ class SimpleAutomation:
                     self.progress_callback.on_step_complete(current_step, success=False, error_message="Game process terminated")
                 return False
 
-            # Focus game window before each step to prevent focus loss
-            # This is critical to prevent game from being minimized during automation
-            try:
-                self.network.focus_game()
-                time.sleep(0.2)  # Brief delay after focusing
-            except Exception as e:
-                logger.warning(f"Could not focus game window: {e}")
+            # Focus game window if step explicitly requests it via focus_before: true
+            # This gives explicit control over which steps need focus (e.g., after benchmark)
+            if step.get("focus_before", False):
+                try:
+                    logger.info(f"Focusing game window before step {current_step} (process: {self.process_name})")
+                    self.network.focus_game(process_name=self.process_name)
+                    time.sleep(0.3)  # Brief delay after focusing
+                except Exception as e:
+                    logger.warning(f"Could not focus game window: {e}")
 
             # Handle optional steps (popups, interruptions)
             if self._handle_optional_steps():
@@ -387,6 +792,26 @@ class SimpleAutomation:
 
                     self._execute_fallback()
 
+        # =====================================================================
+        # CLEANUP: Stop persistent processes and run post-hooks
+        # =====================================================================
+        try:
+            # Stop any remaining tracing agents
+            if self.persistent_processes:
+                logger.info("Stopping remaining persistent processes...")
+                self._stop_tracing()
+                self._stop_persistent_hooks()
+
+            # Execute post-hooks
+            if self.hooks.get("post"):
+                logger.info("=========================================================")
+                logger.info("RUNNING POST-HOOKS")
+                logger.info("=========================================================")
+                self._execute_post_hooks()
+
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+
         # Save successful OCR configs for future reference
         self._save_successful_ocr_configs()
 
@@ -416,28 +841,34 @@ class SimpleAutomation:
         
         # 2. EXECUTE ACTION
         if "action" in step:
-            success = self._execute_modular_action(step["action"], target_element, step_num)
+            success = self._execute_modular_action(step["action"], target_element, step_num, step)
             if not success:
                 return False
         else:
             logger.error(f"No action specified in step {step_num}")
             return False
-        
+
+        # 3. EXECUTE SIDELOAD (if specified, runs after action)
+        if "sideload" in step:
+            sideload_success = self._execute_sideload(step["sideload"])
+            if not sideload_success:
+                logger.warning(f"Sideload failed for step {step_num}, continuing...")
+
         # Wait for expected delay
         expected_delay = step.get("expected_delay", 1)
         if expected_delay > 0:
             logger.info(f"Waiting {expected_delay} seconds after action...")
             time.sleep(expected_delay)
-        
-        # 3. VERIFY SUCCESS (if specified)
+
+        # 4. VERIFY SUCCESS (if specified)
         if "verify_success" in step:
             return self._verify_step_success(step, step_num, retries)
-        
+
         return True
     
-    def _execute_modular_action(self, action_config: Union[str, Dict[str, Any]], target_element: Optional[BoundingBox], step_num: int) -> bool:
+    def _execute_modular_action(self, action_config: Union[str, Dict[str, Any]], target_element: Optional[BoundingBox], step_num: int, step: Dict[str, Any] = None) -> bool:
         """Execute an action using the modular action system."""
-        
+
         # Handle simple string actions
         if isinstance(action_config, str):
             if action_config == "wait":
@@ -448,57 +879,57 @@ class SimpleAutomation:
             else:
                 logger.error(f"Unknown simple action: {action_config}")
                 return False
-        
+
         # Handle complex action configurations
         if not isinstance(action_config, dict):
             logger.error(f"Invalid action configuration: {action_config}")
             return False
-        
+
         action_type = action_config.get("type", "").lower()
-        
+
         # === CLICK ACTIONS ===
         if action_type == "click":
             return self._handle_click_action(action_config, target_element)
-        
+
         # === KEYBOARD ACTIONS ===
         elif action_type in ["key", "keypress", "hotkey"]:
             return self._handle_keyboard_action(action_config)
-        
+
         # === TEXT INPUT ACTIONS ===
         elif action_type in ["type", "text", "input"]:
             return self._handle_text_action(action_config)
-        
+
         # === MOUSE ACTIONS ===
         elif action_type in ["double_click", "right_click", "middle_click"]:
             return self._handle_mouse_action(action_config, target_element)
-        
+
         # === DRAG AND DROP ACTIONS ===
         elif action_type in ["drag", "drag_drop"]:
             return self._handle_drag_action(action_config, target_element)
-        
+
         # === SCROLL ACTIONS ===
         elif action_type == "scroll":
             return self._handle_scroll_action(action_config, target_element)
-        
-        # === WAIT ACTIONS ===
+
+        # === WAIT ACTIONS (with tracing support) ===
         elif action_type == "wait":
-            return self._handle_wait_action(action_config)
-        
+            return self._handle_wait_action(action_config, step)
+
         # === HOLD ACTIONS ===
         elif action_type == "hold_click":
             return self._handle_hold_click_action(action_config, target_element)
-        
+
         elif action_type == "hold_key":
             return self._handle_hold_key_action(action_config)
-        
+
         # === CONDITIONAL ACTIONS ===
         elif action_type == "conditional":
             return self._handle_conditional_action(action_config, target_element)
-        
+
         # === SEQUENCE ACTIONS ===
         elif action_type == "sequence":
             return self._handle_sequence_action(action_config, target_element)
-        
+
         else:
             logger.error(f"Unknown action type: {action_type}")
             return False
@@ -782,25 +1213,47 @@ class SimpleAutomation:
             logger.error(f"Failed to scroll on {element_info}: {str(e)}")
             return False
     
-    def _handle_wait_action(self, action_config: Dict[str, Any]) -> bool:
-        """Handle wait actions with various conditions."""
+    def _handle_wait_action(self, action_config: Dict[str, Any], step: Dict[str, Any] = None) -> bool:
+        """Handle wait actions with various conditions and optional tracing.
+
+        For benchmark steps (wait >= 30s with tracing enabled), starts tracing
+        agents before the wait and stops them after completion.
+        """
         duration = action_config.get("duration", 1)
         condition = action_config.get("condition")
-        
-        if condition:
-            # Conditional wait (wait until condition is met)
-            max_wait = action_config.get("max_wait", 30)
-            check_interval = action_config.get("check_interval", 1)
-            
-            logger.info(f"Waiting up to {max_wait}s for condition: {condition}")
-            # Note: Condition checking would require additional implementation
-            self._interruptible_wait(max_wait)
-        else:
-            # Simple wait
-            logger.info(f"Waiting for {duration} seconds")
-            self._interruptible_wait(duration)
-        
-        return True
+
+        # Check if this is a benchmark step that should have tracing
+        is_benchmark = step and self._is_benchmark_step(action_config, step)
+        tracing_config = step.get("tracing", {}) if step else {}
+
+        # Start tracing for benchmark steps
+        if is_benchmark:
+            logger.info("=========================================================")
+            logger.info(f"BENCHMARK STEP: Starting tracing for {duration}s wait")
+            logger.info("=========================================================")
+            self._start_tracing(duration, tracing_config if isinstance(tracing_config, dict) else None)
+
+        try:
+            if condition:
+                # Conditional wait (wait until condition is met)
+                max_wait = action_config.get("max_wait", 30)
+                check_interval = action_config.get("check_interval", 1)
+
+                logger.info(f"Waiting up to {max_wait}s for condition: {condition}")
+                # Note: Condition checking would require additional implementation
+                self._interruptible_wait(max_wait)
+            else:
+                # Simple wait
+                logger.info(f"Waiting for {duration} seconds")
+                self._interruptible_wait(duration)
+
+            return True
+
+        finally:
+            # Stop tracing for benchmark steps
+            if is_benchmark:
+                logger.info("Benchmark wait complete, stopping tracing agents...")
+                self._stop_tracing()
     
     def _handle_hold_click_action(self, action_config: Dict[str, Any], target_element: Optional[BoundingBox]) -> bool:
         """Handle hold click actions - click and hold for a duration."""
