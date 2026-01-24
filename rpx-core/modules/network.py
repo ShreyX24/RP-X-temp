@@ -7,7 +7,7 @@ import socket
 import json
 import logging
 import requests
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ class NetworkManager:
             logger.error(f"Failed to get screenshot: {str(e)}")
             raise
 
-    def focus_game(self, minimize_others: bool = False, retries: int = 2) -> bool:
+    def focus_game(self, minimize_others: bool = False, retries: int = 2, process_name: str = None) -> bool:
         """
         Focus the game window on the SUT to ensure it's in foreground.
         Should be called before each automation step to prevent focus loss.
@@ -226,6 +226,7 @@ class NetworkManager:
         Args:
             minimize_others: If True, also minimize other windows on SUT
             retries: Number of retry attempts on timeout (default: 2)
+            process_name: Optional process name to focus (e.g., 'FarCry6.exe')
 
         Returns:
             True if focus was successful, False otherwise
@@ -235,9 +236,12 @@ class NetworkManager:
         for attempt in range(retries + 1):
             try:
                 # Increased timeout from 5s to 15s for heavy games like RDR2, BMW
+                payload = {"minimize_others": minimize_others}
+                if process_name:
+                    payload["process_name"] = process_name
                 response = self.session.post(
                     f"{self.base_url}/focus",
-                    json={"minimize_others": minimize_others},
+                    json=payload,
                     timeout=15
                 )
                 result = response.json()
@@ -532,6 +536,109 @@ class NetworkManager:
         except Exception as e:
             logger.error(f"Error checking process {process_name}: {e}")
             return False
+
+    # =========================================================================
+    # SCRIPT EXECUTION (for hooks, sideload, and tracing)
+    # =========================================================================
+
+    def execute_command(self, path: str, args: List[str] = None, working_dir: str = None,
+                        timeout: int = 300, async_exec: bool = False,
+                        shell: bool = None) -> Dict[str, Any]:
+        """
+        Execute a command/script on the SUT.
+
+        Used for hooks, sideload scripts, and tracing agents (SOCWatch, PTAT).
+
+        Args:
+            path: Path to executable or script on the SUT
+            args: List of command-line arguments
+            working_dir: Working directory (defaults to script's directory)
+            timeout: Timeout in seconds for sync execution (ignored if async)
+            async_exec: If True, returns immediately with PID for later termination
+            shell: Whether to use shell execution (auto-detected from extension if None)
+
+        Returns:
+            For sync: {"status": "success/error", "exit_code": int, "stdout": str, "stderr": str}
+            For async: {"status": "started", "pid": int}
+        """
+        try:
+            payload = {
+                "path": path,
+                "args": args or [],
+                "timeout": timeout,
+                "async": async_exec,
+            }
+            if working_dir:
+                payload["working_dir"] = working_dir
+            if shell is not None:
+                payload["shell"] = shell
+
+            # HTTP timeout: command timeout + buffer for network overhead
+            http_timeout = timeout + 30 if not async_exec else 30
+
+            logger.info(f"[Execute] {'Async' if async_exec else 'Sync'}: {path} {' '.join(args or [])}")
+
+            response = self.session.post(
+                f"{self.base_url}/execute",
+                json=payload,
+                timeout=http_timeout
+            )
+
+            result = response.json()
+
+            if async_exec:
+                if result.get("status") == "started":
+                    logger.info(f"[Execute] Started async process with PID: {result.get('pid')}")
+                else:
+                    logger.error(f"[Execute] Failed to start: {result.get('message')}")
+            else:
+                if result.get("status") == "success":
+                    logger.info(f"[Execute] Completed with exit code: {result.get('exit_code')}")
+                else:
+                    logger.warning(f"[Execute] Failed: {result.get('stderr', result.get('message', 'Unknown error'))}")
+
+            return result
+
+        except requests.exceptions.Timeout:
+            logger.error(f"[Execute] Request timed out after {http_timeout}s")
+            return {"status": "timeout", "message": f"Request timed out after {http_timeout}s"}
+        except Exception as e:
+            logger.error(f"[Execute] Error: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def terminate_process_by_pid(self, pid: int) -> Dict[str, Any]:
+        """
+        Terminate a process on the SUT by PID.
+
+        Used to stop async processes started via execute_command (e.g., tracing agents).
+
+        Args:
+            pid: Process ID to terminate
+
+        Returns:
+            {"status": "success/error", "terminated": bool, "pid": int}
+        """
+        try:
+            logger.info(f"[Terminate] Stopping process PID: {pid}")
+
+            response = self.session.post(
+                f"{self.base_url}/terminate",
+                json={"pid": pid},
+                timeout=15
+            )
+
+            result = response.json()
+
+            if result.get("terminated"):
+                logger.info(f"[Terminate] Successfully terminated PID: {pid}")
+            else:
+                logger.warning(f"[Terminate] Failed to terminate PID: {pid}")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"[Terminate] Error terminating PID {pid}: {e}")
+            return {"status": "error", "terminated": False, "message": str(e)}
 
     def close(self):
         """Close the network session."""

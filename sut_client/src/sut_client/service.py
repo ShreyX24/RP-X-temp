@@ -34,6 +34,8 @@ from .system import check_process, kill_process
 from .steam import login_steam, get_steam_library_folders, get_steam_auto_login_user, is_steam_running, verify_steam_login, find_standalone_game
 from .hardware import set_dpi_awareness, get_screen_resolution, get_cpu_model, get_gpu_model
 from .display import get_display_manager
+from .update_handler import init_update_handler, get_update_handler
+from . import __version__
 
 # Setup logging
 logging.basicConfig(
@@ -829,6 +831,11 @@ def create_app() -> Flask:
             retry_interval = 5   # Reduced from 10 - faster retry cycle
             retry_count = 5      # Fixed at 5 retries (was dynamic based on startup_wait)
 
+            # Notify update handler that automation is starting
+            handler = get_update_handler()
+            if handler:
+                handler.set_automation_state(True)
+
             result = launch_game(
                 steam_app_id=steam_app_id,
                 exe_path=exe_path,
@@ -862,6 +869,12 @@ def create_app() -> Flask:
         """Terminate the currently tracked game."""
         try:
             result = terminate_game()
+
+            # Notify update handler that automation has ended
+            handler = get_update_handler()
+            if handler:
+                handler.set_automation_state(False)
+
             return jsonify(result)
         except Exception as e:
             logger.error(f"Terminate game error: {e}")
@@ -1083,6 +1096,11 @@ def create_app() -> Flask:
                 result['message'] = terminate_result.get('message', 'Game terminated')
                 result['terminated'] = True
 
+                # Notify update handler that automation has ended
+                handler = get_update_handler()
+                if handler:
+                    handler.set_automation_state(False)
+
             elif action_type == 'wait':
                 duration = data.get('duration', 1.0)
                 time.sleep(duration)
@@ -1204,6 +1222,236 @@ def create_app() -> Flask:
 
         except Exception as e:
             logger.error(f"Kill process error: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    # =========================================================================
+    # SCRIPT EXECUTION ENDPOINTS (for hooks, sideload, and tracing)
+    # =========================================================================
+
+    # Track running async processes for later termination
+    _running_processes: Dict[int, Any] = {}
+
+    @app.route('/execute', methods=['POST'])
+    def execute_script():
+        """
+        Execute a script or command on the SUT.
+
+        Used for hooks, sideload scripts, and tracing agents (SOCWatch, PTAT).
+
+        Request body:
+        {
+            "path": "C:\\Tools\\socwatch64.exe",
+            "args": ["-f", "cpu", "-o", "output"],
+            "working_dir": "C:\\Tools",  // Optional, defaults to script directory
+            "timeout": 300,              // Optional, ignored if async=true
+            "async": false,              // If true, return immediately with PID
+            "shell": true                // Optional, auto-detect from extension
+        }
+
+        Response (sync - async=false):
+        {
+            "status": "success",
+            "exit_code": 0,
+            "stdout": "...",
+            "stderr": "..."
+        }
+
+        Response (async - async=true):
+        {
+            "status": "started",
+            "pid": 12345
+        }
+        """
+        import subprocess
+        import shlex
+
+        try:
+            data = request.get_json() or {}
+            path = data.get('path')
+            args = data.get('args', [])
+            working_dir = data.get('working_dir')
+            timeout = data.get('timeout', 300)
+            async_exec = data.get('async', False)
+            shell = data.get('shell')
+
+            if not path:
+                return jsonify({"status": "error", "message": "Missing 'path' parameter"}), 400
+
+            # Validate path exists
+            if not os.path.exists(path):
+                return jsonify({
+                    "status": "error",
+                    "message": f"Executable not found: {path}"
+                }), 404
+
+            # Auto-detect shell mode based on extension if not specified
+            if shell is None:
+                ext = os.path.splitext(path)[1].lower()
+                shell = ext in ['.bat', '.cmd', '.ps1']
+
+            # Build command
+            if shell:
+                # For shell scripts, use shell=True
+                if path.lower().endswith('.ps1'):
+                    # PowerShell script
+                    cmd = ['powershell', '-ExecutionPolicy', 'Bypass', '-File', path] + args
+                else:
+                    # Batch file
+                    cmd = [path] + args
+            else:
+                cmd = [path] + args
+
+            # Set working directory (default to script's directory)
+            if not working_dir:
+                working_dir = os.path.dirname(path) or None
+
+            logger.info(f"Executing: {' '.join(cmd)}")
+            if working_dir:
+                logger.info(f"Working directory: {working_dir}")
+
+            if async_exec:
+                # Async execution - return immediately with PID
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=working_dir,
+                    shell=shell and not path.lower().endswith('.ps1'),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+                )
+
+                # Track the process for later termination
+                _running_processes[process.pid] = process
+                logger.info(f"Started async process with PID: {process.pid}")
+
+                return jsonify({
+                    "status": "started",
+                    "pid": process.pid,
+                    "command": cmd[0]
+                })
+            else:
+                # Sync execution - wait for completion
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        cwd=working_dir,
+                        shell=shell and not path.lower().endswith('.ps1'),
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout
+                    )
+
+                    logger.info(f"Process completed with exit code: {result.returncode}")
+
+                    return jsonify({
+                        "status": "success" if result.returncode == 0 else "error",
+                        "exit_code": result.returncode,
+                        "stdout": result.stdout[-10000:] if result.stdout else "",  # Limit output size
+                        "stderr": result.stderr[-5000:] if result.stderr else ""
+                    })
+
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"Process timed out after {timeout}s")
+                    return jsonify({
+                        "status": "timeout",
+                        "message": f"Process timed out after {timeout} seconds"
+                    }), 408
+
+        except Exception as e:
+            logger.error(f"Execute script error: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route('/terminate', methods=['POST'])
+    def terminate_process():
+        """
+        Terminate a process by PID.
+
+        Used to stop async processes started via /execute (e.g., tracing agents).
+
+        Request body:
+        {
+            "pid": 12345
+        }
+
+        Response:
+        {
+            "status": "success",
+            "terminated": true,
+            "pid": 12345
+        }
+        """
+        import subprocess
+        import signal
+
+        try:
+            data = request.get_json() or {}
+            pid = data.get('pid')
+
+            if pid is None:
+                return jsonify({"status": "error", "message": "Missing 'pid' parameter"}), 400
+
+            pid = int(pid)
+            logger.info(f"Terminating process with PID: {pid}")
+
+            # Check if we have a reference to this process
+            if pid in _running_processes:
+                process = _running_processes[pid]
+                try:
+                    process.terminate()
+                    process.wait(timeout=5)
+                    del _running_processes[pid]
+                    logger.info(f"Terminated tracked process {pid}")
+                    return jsonify({
+                        "status": "success",
+                        "terminated": True,
+                        "pid": pid
+                    })
+                except subprocess.TimeoutExpired:
+                    # Force kill if graceful termination fails
+                    process.kill()
+                    del _running_processes[pid]
+                    logger.info(f"Force killed tracked process {pid}")
+                    return jsonify({
+                        "status": "success",
+                        "terminated": True,
+                        "pid": pid,
+                        "force_killed": True
+                    })
+
+            # Fallback: terminate by PID using system commands
+            if os.name == 'nt':
+                # Windows: use taskkill with tree termination
+                result = subprocess.run(
+                    ['taskkill', '/F', '/T', '/PID', str(pid)],
+                    capture_output=True,
+                    text=True
+                )
+                success = result.returncode == 0
+                if success:
+                    logger.info(f"Terminated process {pid} via taskkill")
+                else:
+                    logger.warning(f"Failed to terminate {pid}: {result.stderr}")
+            else:
+                # Unix: send SIGTERM
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    success = True
+                    logger.info(f"Sent SIGTERM to process {pid}")
+                except ProcessLookupError:
+                    logger.warning(f"Process {pid} not found")
+                    success = False
+                except PermissionError:
+                    logger.warning(f"Permission denied to terminate {pid}")
+                    success = False
+
+            return jsonify({
+                "status": "success" if success else "error",
+                "terminated": success,
+                "pid": pid
+            })
+
+        except Exception as e:
+            logger.error(f"Terminate process error: {e}")
             return jsonify({"status": "error", "message": str(e)}), 500
 
     # =========================================================================
@@ -1482,6 +1730,10 @@ def start_service(master_override: Optional[str] = None):
         discovery_thread.start()
         logger.info("UDP Discovery started - listening for Master broadcast")
 
+    # Initialize update handler to receive update notifications
+    update_handler = init_update_handler(__version__)
+    logger.info("Update handler initialized")
+
     # Run Flask app with Waitress (production WSGI server)
     # Waitress handles concurrent requests properly on Windows
     try:
@@ -1501,6 +1753,8 @@ def start_service(master_override: Optional[str] = None):
             discovery_thread.stop()
         if ws_thread:
             ws_thread.stop()
+        if update_handler:
+            update_handler.stop()
         logger.info("Shutdown complete")
 
 
