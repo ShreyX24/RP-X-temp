@@ -125,10 +125,53 @@ def _run_as_admin() -> bool:
     return ret > 32
 
 
+def _setup_ssh_server() -> bool:
+    """
+    Setup OpenSSH Server for bidirectional SSH with Master.
+
+    Returns:
+        True if setup was successful
+    """
+    print()
+    print("=" * 50)
+    print("Setting up OpenSSH Server for Master connectivity...")
+    print("=" * 50)
+    print()
+
+    try:
+        from .ssh_setup import get_ssh_setup
+        ssh_setup = get_ssh_setup()
+
+        result = ssh_setup.run_full_setup()
+
+        # Print results
+        for step in result.get("steps", []):
+            status_icon = "\033[92m[OK]\033[0m" if step["success"] else "\033[91m[FAIL]\033[0m"
+            print(f"  {status_icon} {step['step']}: {step['message']}")
+
+        print()
+
+        if result.get("success"):
+            print("\033[92mSSH setup completed!\033[0m")
+            status = result.get("status", {})
+            print(f"  sshd running: {status.get('sshd_running', False)}")
+            print(f"  sshd enabled: {status.get('sshd_enabled', False)}")
+            return True
+        else:
+            print(f"\033[93mSSH setup had issues: {result.get('error', 'Unknown')}\033[0m")
+            print("  (SUT client will still work, but Master may not be able to SSH in)")
+            return False
+
+    except Exception as e:
+        print(f"\033[93mSSH setup skipped: {e}\033[0m")
+        print("  (SUT client will still work, but Master may not be able to SSH in)")
+        return False
+
+
 def _install_scheduled_task(master_override: str = None) -> bool:
     """
     Install SUT client as a Windows Scheduled Task with highest privileges.
-    This allows running elevated without UAC prompts after initial setup.
+    Also sets up OpenSSH Server for bidirectional SSH with Master.
 
     Args:
         master_override: Optional master server IP:PORT to pass to the task
@@ -145,6 +188,15 @@ def _install_scheduled_task(master_override: str = None) -> bool:
     import os
 
     task_name = "SUT-Client"
+
+    # Step 1: Setup SSH Server (while we have admin privileges)
+    _setup_ssh_server()
+
+    print()
+    print("=" * 50)
+    print("Creating Scheduled Task...")
+    print("=" * 50)
+    print()
 
     # Find the sut-client executable
     sut_client_exe = shutil.which('sut-client')
@@ -183,12 +235,13 @@ def _install_scheduled_task(master_override: str = None) -> bool:
         ], capture_output=True, text=True)
 
         if result.returncode == 0:
-            print(f"SUCCESS: Scheduled task '{task_name}' created!")
+            print(f"\033[92mSUCCESS: Scheduled task '{task_name}' created!\033[0m")
             print(f"Command: {command}")
             print()
             print("The SUT client will now:")
             print("  - Start automatically at user login")
             print("  - Run with admin privileges (no UAC prompt)")
+            print("  - Accept SSH connections from Master (for trace pulling)")
             print()
             print("To start immediately without relogging:")
             print(f"  schtasks /Run /TN {task_name}")
@@ -312,6 +365,11 @@ def main():
         help="Master server IP for updates (used with --update)"
     )
     parser.add_argument(
+        "--setup-ssh",
+        action="store_true",
+        help="Setup OpenSSH Server on this machine for bidirectional SSH with Master"
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"sut-client {__version__}"
@@ -340,6 +398,54 @@ def main():
         handler = UpdateHandler(__version__)
         success = handler.execute_update(master_ip)
         sys.exit(0 if success else 1)
+
+    # Handle SSH setup command
+    if args.setup_ssh:
+        # Enable ANSI colors on Windows
+        _enable_windows_ansi()
+        print_banner(__version__)
+        print("[SSH SETUP MODE]")
+        print()
+
+        # Check for admin (required for OpenSSH setup)
+        if sys.platform == "win32" and not _is_admin():
+            print("\033[93mWarning: SSH setup requires administrator privileges.\033[0m")
+            print("Some steps may fail without elevation.")
+            print()
+
+        from .ssh_setup import get_ssh_setup
+        ssh_setup = get_ssh_setup()
+
+        print("Running OpenSSH Server setup...")
+        print()
+
+        result = ssh_setup.run_full_setup()
+
+        # Print results
+        for step in result.get("steps", []):
+            status_icon = "\033[92m[OK]\033[0m" if step["success"] else "\033[91m[FAIL]\033[0m"
+            print(f"  {status_icon} {step['step']}: {step['message']}")
+
+        print()
+
+        if result.get("success"):
+            print("\033[92mSSH setup completed successfully!\033[0m")
+            print()
+            # Print status
+            status = result.get("status", {})
+            print("Current status:")
+            print(f"  OpenSSH installed: {status.get('openssh_installed', False)}")
+            print(f"  sshd running: {status.get('sshd_running', False)}")
+            print(f"  sshd enabled: {status.get('sshd_enabled', False)}")
+            print(f"  Authorized keys: {status.get('authorized_keys_path', 'N/A')}")
+            print(f"  Keys count: {status.get('authorized_keys_count', 0)}")
+            print()
+            print("Master can now connect to this SUT via SSH.")
+            print("Run 'sut-client' normally to register with Master and exchange keys.")
+        else:
+            print(f"\033[91mSSH setup failed: {result.get('error', 'Unknown error')}\033[0m")
+
+        sys.exit(0 if result.get("success") else 1)
 
     # Handle install/uninstall service commands (requires admin)
     if args.install_service:

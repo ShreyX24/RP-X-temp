@@ -155,6 +155,9 @@ class WebSocketClient:
 
                     logger.info(f"[CONNECTED] Registered with Master at {self.master_ip}:{self.master_port}")
 
+                    # Handle bidirectional SSH: Install Master's public key if provided
+                    await self._handle_master_key_exchange(ws, response)
+
                     # Message loop
                     async for message in ws:
                         await self._handle_message(json.loads(message))
@@ -173,6 +176,54 @@ class WebSocketClient:
                     logger.error(f"Error: {e}, reconnecting in {delay:.1f}s...")
                     await asyncio.sleep(delay)
 
+    async def _handle_master_key_exchange(self, ws, response: Dict[str, Any]):
+        """
+        Handle bidirectional SSH key exchange.
+
+        If Master sends its public key, install it in authorized_keys
+        so Master can SSH into this SUT for trace pulling, etc.
+        """
+        master_public_key = response.get("master_public_key")
+        master_fingerprint = response.get("master_fingerprint")
+        re_exchange = response.get("re_exchange", False)
+
+        if not master_public_key:
+            logger.debug("No master public key in register_ack, skipping key exchange")
+            return
+
+        logger.info(f"Master key exchange: fingerprint={master_fingerprint}, re_exchange={re_exchange}")
+
+        try:
+            from .ssh_setup import get_ssh_setup
+            ssh_setup = get_ssh_setup()
+
+            # Install Master's public key
+            success, msg = ssh_setup.add_authorized_key(master_public_key)
+
+            if success:
+                logger.info(f"Installed Master's SSH key: {msg}")
+                # Notify Master that key was installed
+                await ws.send(json.dumps({
+                    "type": "master_key_installed",
+                    "success": True,
+                    "message": msg,
+                }))
+            else:
+                logger.warning(f"Failed to install Master's SSH key: {msg}")
+                await ws.send(json.dumps({
+                    "type": "master_key_installed",
+                    "success": False,
+                    "error": msg,
+                }))
+
+        except Exception as e:
+            logger.error(f"Error during master key exchange: {e}")
+            await ws.send(json.dumps({
+                "type": "master_key_installed",
+                "success": False,
+                "error": str(e),
+            }))
+
     async def _handle_message(self, message: Dict[str, Any]):
         """Handle incoming message from Master"""
         msg_type = message.get("type")
@@ -188,6 +239,10 @@ class WebSocketClient:
         elif msg_type == "update_available":
             # Handle update notification from Master
             await self._handle_update_available(message)
+
+        elif msg_type == "install_master_key":
+            # Master requesting key re-installation (e.g., after IP change)
+            await self._handle_master_key_exchange(self.websocket, message)
 
         elif msg_type == "rename_pc":
             # Handle PC rename command
