@@ -264,20 +264,10 @@ async def websocket_sut_endpoint(websocket: WebSocket, sut_id: str):
         # Register the WebSocket connection
         connection = await ws_manager.connect(sut_id, websocket, init_data)
 
-        # Register/update in device registry
-        registry.register_device(
-            ip=init_data.get("ip", "unknown"),
-            port=init_data.get("port", 8080),
-            unique_id=sut_id,
-            capabilities=init_data.get("capabilities", []),
-            hostname=init_data.get("hostname", ""),
-            cpu_model=init_data.get("cpu_model"),
-            display_name=init_data.get("display_name"),
-        )
-
         # Handle SSH key registration (lazy-load to avoid always loading SSH module)
         ssh_registered = False
         ssh_public_key = init_data.get("ssh_public_key")
+        ssh_fingerprint = init_data.get("ssh_key_fingerprint")
         if ssh_public_key:
             try:
                 from ..ssh import get_key_store
@@ -291,12 +281,44 @@ async def websocket_sut_endpoint(websocket: WebSocket, sut_id: str):
             except Exception as e:
                 logger.warning(f"SSH key registration skipped for {sut_id}: {e}")
 
+        # Register/update in device registry (with SSH info)
+        device = registry.register_device(
+            ip=init_data.get("ip", "unknown"),
+            port=init_data.get("port", 8080),
+            unique_id=sut_id,
+            capabilities=init_data.get("capabilities", []),
+            hostname=init_data.get("hostname", ""),
+            cpu_model=init_data.get("cpu_model"),
+            display_name=init_data.get("display_name"),
+            ssh_public_key=ssh_public_key,
+            ssh_fingerprint=ssh_fingerprint,
+        )
+
+        # Get Master's public key for bidirectional SSH (lazy-load)
+        master_public_key = None
+        master_fingerprint = None
+        re_exchange_needed = False
+        try:
+            from ..ssh import get_master_key_manager
+            master_key_mgr = get_master_key_manager()
+            master_public_key = master_key_mgr.get_public_key()
+            master_fingerprint = master_key_mgr.get_fingerprint()
+            # Check if re-exchange is needed (IP changed or key not installed)
+            re_exchange_needed = not device.master_key_installed
+        except Exception as e:
+            logger.warning(f"Master key retrieval skipped: {e}")
+
         # Send registration acknowledgment (SUT client expects "register_ack")
         await websocket.send_json({
             "type": "register_ack",
             "message": f"SUT {sut_id} registered successfully",
             "sut_id": sut_id,
             "ssh_registered": ssh_registered,
+            # Bidirectional SSH: Send Master's key for SUT to install
+            "master_public_key": master_public_key,
+            "master_fingerprint": master_fingerprint,
+            "re_exchange": re_exchange_needed,
+            "session_id": device.session_id,
         })
 
         # Keep connection alive and handle messages
@@ -321,6 +343,25 @@ async def websocket_sut_endpoint(websocket: WebSocket, sut_id: str):
                 elif msg_type == "status_update":
                     # Update device status in registry
                     pass
+
+                elif msg_type == "master_key_installed":
+                    # SUT confirms it has installed Master's public key
+                    success = message.get("success", False)
+                    if success:
+                        registry.update_master_key_status(sut_id, installed=True)
+                        logger.info(f"Master key installed on {sut_id}")
+                        await websocket.send_json({
+                            "type": "master_key_installed_ack",
+                            "success": True,
+                        })
+                    else:
+                        error = message.get("error", "Unknown error")
+                        logger.warning(f"Master key installation failed on {sut_id}: {error}")
+                        await websocket.send_json({
+                            "type": "master_key_installed_ack",
+                            "success": False,
+                            "error": error,
+                        })
 
             except WebSocketDisconnect:
                 break
@@ -474,3 +515,217 @@ async def delete_sut(unique_id: str, force: bool = Query(False, description="For
         "message": f"SUT {unique_id} deleted successfully",
         "was_paired": device.is_paired
     }
+
+
+# ==================== SSH MANAGEMENT ENDPOINTS ====================
+
+class SSHExchangeRequest(BaseModel):
+    """Request to trigger SSH key exchange"""
+    force: bool = False
+
+
+@router.post("/suts/{unique_id}/ssh/exchange")
+async def trigger_ssh_exchange(unique_id: str, request: Optional[SSHExchangeRequest] = None):
+    """
+    Trigger SSH key exchange with a specific SUT.
+
+    This sends the Master's public key to the SUT via WebSocket,
+    prompting it to add the key to authorized_keys.
+
+    Args:
+        unique_id: SUT unique identifier
+        force: Force re-exchange even if key is already installed
+    """
+    force = request.force if request else False
+    registry = get_device_registry()
+    ws_manager = get_ws_manager()
+
+    device = registry.get_device_by_id(unique_id)
+    if not device:
+        raise HTTPException(status_code=404, detail=f"SUT {unique_id} not found")
+
+    if not device.is_online:
+        raise HTTPException(status_code=400, detail=f"SUT {unique_id} is offline")
+
+    if device.master_key_installed and not force:
+        return {
+            "success": True,
+            "message": "Master key already installed",
+            "master_key_installed": True,
+            "installed_at": device.master_key_installed_at.isoformat() if device.master_key_installed_at else None,
+        }
+
+    # Get Master's public key
+    try:
+        from ..ssh import get_master_key_manager
+        master_key_mgr = get_master_key_manager()
+        master_public_key = master_key_mgr.get_public_key()
+        master_fingerprint = master_key_mgr.get_fingerprint()
+
+        if not master_public_key:
+            raise HTTPException(status_code=500, detail="Master SSH key not available")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get Master key: {e}")
+
+    # Send key exchange request via WebSocket
+    message = {
+        "type": "install_master_key",
+        "master_public_key": master_public_key,
+        "master_fingerprint": master_fingerprint,
+        "force": force,
+    }
+
+    success = await ws_manager.send_to_device(unique_id, message)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to send key exchange request")
+
+    return {
+        "success": True,
+        "message": "Key exchange request sent",
+        "master_fingerprint": master_fingerprint,
+        "force": force,
+    }
+
+
+@router.get("/suts/{unique_id}/ssh/status")
+async def get_ssh_status(unique_id: str):
+    """
+    Get SSH status for a specific SUT.
+
+    Returns information about bidirectional SSH setup:
+    - SUT's SSH key registration status on Master
+    - Master's key installation status on SUT
+    - Session binding information
+    - IP change history
+    """
+    registry = get_device_registry()
+    device = registry.get_device_by_id(unique_id)
+
+    if not device:
+        raise HTTPException(status_code=404, detail=f"SUT {unique_id} not found")
+
+    # Get Master key info
+    master_key_info = {}
+    try:
+        from ..ssh import get_master_key_manager
+        master_key_mgr = get_master_key_manager()
+        master_key_info = {
+            "fingerprint": master_key_mgr.get_fingerprint(),
+            "available": master_key_mgr.get_public_key() is not None,
+        }
+    except Exception as e:
+        master_key_info = {"error": str(e)}
+
+    # Get SUT key registration status on Master
+    sut_key_registered = False
+    try:
+        from ..ssh import get_key_store
+        key_store = get_key_store()
+        if device.ssh_fingerprint:
+            sut_key_registered = key_store.is_key_registered(device.ssh_fingerprint)
+    except Exception:
+        pass
+
+    return {
+        "unique_id": unique_id,
+        "ip": device.ip,
+        "hostname": device.hostname,
+        "is_online": device.is_online,
+        # SUT -> Master SSH (SUT's key on Master)
+        "sut_to_master": {
+            "ssh_fingerprint": device.ssh_fingerprint,
+            "registered_on_master": sut_key_registered,
+        },
+        # Master -> SUT SSH (Master's key on SUT)
+        "master_to_sut": {
+            "master_key_installed": device.master_key_installed,
+            "installed_at": device.master_key_installed_at.isoformat() if device.master_key_installed_at else None,
+        },
+        "master_key_info": master_key_info,
+        # Binding information
+        "binding": {
+            "session_id": device.session_id,
+            "last_ip_change": device.last_ip_change.isoformat() if device.last_ip_change else None,
+            "ip_change_count": len(device.binding_history),
+            "binding_history": device.binding_history[-5:],  # Last 5 changes
+        },
+    }
+
+
+@router.get("/suts/ssh/diagnose/{ip}")
+async def diagnose_ssh_connectivity(ip: str):
+    """
+    Diagnose SSH connectivity to a SUT by IP address.
+
+    Attempts to connect to the SUT via SSH using Master's key
+    and returns diagnostic information.
+    """
+    # Try to find device in registry
+    registry = get_device_registry()
+    device = registry.get_device_by_ip(ip)
+
+    device_info = None
+    if device:
+        device_info = {
+            "unique_id": device.unique_id,
+            "hostname": device.hostname,
+            "is_online": device.is_online,
+            "master_key_installed": device.master_key_installed,
+        }
+
+    # Test SSH connection
+    ssh_result = {"tested": False}
+    try:
+        from ..ssh import get_master_key_manager
+        master_key_mgr = get_master_key_manager()
+
+        # Ensure Master key exists
+        key_exists, key_msg = master_key_mgr.ensure_key_exists()
+        if not key_exists:
+            ssh_result = {
+                "tested": False,
+                "error": f"Master key not available: {key_msg}",
+            }
+        else:
+            # Test connection
+            success, msg = master_key_mgr.test_connection(ip, timeout=10)
+            ssh_result = {
+                "tested": True,
+                "connected": success,
+                "message": msg,
+                "master_fingerprint": master_key_mgr.get_fingerprint(),
+            }
+    except Exception as e:
+        ssh_result = {
+            "tested": False,
+            "error": str(e),
+        }
+
+    return {
+        "ip": ip,
+        "device_found": device is not None,
+        "device_info": device_info,
+        "ssh": ssh_result,
+    }
+
+
+@router.get("/ssh/master-key")
+async def get_master_key_info():
+    """
+    Get information about the Master's SSH key.
+
+    Used for diagnostics and displaying Master's fingerprint.
+    """
+    try:
+        from ..ssh import get_master_key_manager
+        master_key_mgr = get_master_key_manager()
+
+        return {
+            "exists": master_key_mgr.key_path.exists(),
+            "fingerprint": master_key_mgr.get_fingerprint(),
+            "public_key_path": str(master_key_mgr.public_key_path),
+            "private_key_path": str(master_key_mgr.key_path),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

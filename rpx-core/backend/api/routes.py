@@ -140,7 +140,14 @@ class APIRoutes:
                             "success_rate": sut.get("success_rate", 100.0),
                             "is_paired": sut.get("is_paired", False),
                             "paired_at": sut.get("paired_at"),
-                            "paired_by": sut.get("paired_by")
+                            "paired_by": sut.get("paired_by"),
+                            # SSH fields (bidirectional SSH)
+                            "ssh_fingerprint": sut.get("ssh_fingerprint"),
+                            "master_key_installed": sut.get("master_key_installed", False),
+                            "master_key_installed_at": sut.get("master_key_installed_at"),
+                            # Binding fields
+                            "session_id": sut.get("session_id"),
+                            "last_ip_change": sut.get("last_ip_change"),
                         }
                         devices_data.append(device_data)
 
@@ -1197,6 +1204,8 @@ class APIRoutes:
                 resolution = data.get('resolution')  # '720p' | '1080p' | '1440p' | '2160p'
                 skip_steam_login = data.get('skip_steam_login', False)  # If true, skip Steam account management
                 disable_tracing = data.get('disable_tracing', False)  # If true, disable SOCWatch/PTAT tracing
+                cooldown_seconds = data.get('cooldown_seconds', 120)  # Cooldown between iterations (default 2 min, 0 to disable)
+                tracing_agents = data.get('tracing_agents')  # Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
 
                 if not sut_ip or not game_name:
                     return jsonify({"error": "sut_ip and game_name are required"}), 400
@@ -1270,9 +1279,11 @@ class APIRoutes:
                         quality=quality,
                         resolution=resolution,
                         skip_steam_login=skip_steam_login,
-                        disable_tracing=disable_tracing
+                        disable_tracing=disable_tracing,
+                        cooldown_seconds=int(cooldown_seconds),
+                        tracing_agents=tracing_agents
                     )
-                    logger.info(f"Successfully queued run {run_id} (quality={quality}, resolution={resolution}, skip_steam={skip_steam_login}, disable_tracing={disable_tracing})")
+                    logger.info(f"Successfully queued run {run_id} (quality={quality}, resolution={resolution}, skip_steam={skip_steam_login}, disable_tracing={disable_tracing}, tracing_agents={tracing_agents}, cooldown={cooldown_seconds}s)")
                     
                     return jsonify({
                         "status": "success",
@@ -1732,6 +1743,8 @@ class APIRoutes:
                 resolution = data.get('resolution')  # '720p' | '1080p' | '1440p' | '2160p'
                 skip_steam_login = data.get('skip_steam_login', False)  # If true, skip Steam account management
                 disable_tracing = data.get('disable_tracing', False)  # If true, disable SOCWatch/PTAT tracing
+                cooldown_seconds = data.get('cooldown_seconds', 120)  # Cooldown between iterations (default 2 min, 0 to disable)
+                tracing_agents = data.get('tracing_agents')  # Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
 
                 if not sut_ip:
                     return jsonify({"error": "sut_ip is required"}), 400
@@ -1781,7 +1794,9 @@ class APIRoutes:
                     quality=quality,
                     resolution=resolution,
                     skip_steam_login=skip_steam_login,
-                    disable_tracing=disable_tracing
+                    disable_tracing=disable_tracing,
+                    cooldown_seconds=int(cooldown_seconds),
+                    tracing_agents=tracing_agents
                 )
 
                 logger.info(f"Campaign created: {campaign.campaign_id} with {len(campaign.run_ids)} runs")
@@ -2139,4 +2154,208 @@ class APIRoutes:
 
             except Exception as e:
                 logger.error(f"Error resetting discovery settings: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        # =================================================================
+        # Tracing Configuration API
+        # =================================================================
+
+        @app.route('/api/tracing/config', methods=['GET'])
+        def get_tracing_config():
+            """Get the centralized tracing configuration."""
+            try:
+                from modules.tracing_config import get_tracing_config
+                config = get_tracing_config()
+                return jsonify({
+                    "status": "success",
+                    "config": config.to_dict()
+                })
+            except Exception as e:
+                logger.error(f"Error getting tracing config: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/tracing/config', methods=['PUT'])
+        def update_tracing_config():
+            """Update the centralized tracing configuration."""
+            try:
+                from modules.tracing_config import get_tracing_config
+                data = request.get_json()
+                if not data:
+                    return jsonify({"error": "No data provided"}), 400
+
+                config = get_tracing_config()
+                if config.update(data):
+                    return jsonify({
+                        "status": "success",
+                        "message": "Tracing configuration updated",
+                        "config": config.to_dict()
+                    })
+                else:
+                    return jsonify({"error": "Failed to save configuration"}), 500
+            except Exception as e:
+                logger.error(f"Error updating tracing config: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/tracing/agents', methods=['GET'])
+        def get_tracing_agents():
+            """Get all configured tracing agents."""
+            try:
+                from modules.tracing_config import get_tracing_config
+                config = get_tracing_config()
+                return jsonify({
+                    "status": "success",
+                    "agents": config.agents,
+                    "enabled_agents": list(config.get_enabled_agents().keys())
+                })
+            except Exception as e:
+                logger.error(f"Error getting tracing agents: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/tracing/agents/<agent_name>', methods=['PUT'])
+        def update_tracing_agent(agent_name):
+            """Update a specific tracing agent's configuration."""
+            try:
+                from modules.tracing_config import get_tracing_config
+                data = request.get_json()
+                if not data:
+                    return jsonify({"error": "No data provided"}), 400
+
+                config = get_tracing_config()
+                if config.update_agent(agent_name, data):
+                    return jsonify({
+                        "status": "success",
+                        "message": f"Agent '{agent_name}' configuration updated",
+                        "agent": config.get_agent(agent_name)
+                    })
+                else:
+                    return jsonify({"error": "Failed to save agent configuration"}), 500
+            except Exception as e:
+                logger.error(f"Error updating tracing agent: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/tracing/agents/<agent_name>/toggle', methods=['POST'])
+        def toggle_tracing_agent(agent_name):
+            """Enable or disable a tracing agent."""
+            try:
+                from modules.tracing_config import get_tracing_config
+                config = get_tracing_config()
+
+                agent = config.get_agent(agent_name)
+                if not agent:
+                    return jsonify({"error": f"Agent '{agent_name}' not found"}), 404
+
+                # Toggle enabled state
+                agent["enabled"] = not agent.get("enabled", False)
+
+                if config.update_agent(agent_name, agent):
+                    return jsonify({
+                        "status": "success",
+                        "message": f"Agent '{agent_name}' {'enabled' if agent['enabled'] else 'disabled'}",
+                        "enabled": agent["enabled"]
+                    })
+                else:
+                    return jsonify({"error": "Failed to save agent configuration"}), 500
+            except Exception as e:
+                logger.error(f"Error toggling tracing agent: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/tracing/output-dir', methods=['PUT'])
+        def update_tracing_output_dir():
+            """Update the tracing output directory."""
+            try:
+                from modules.tracing_config import get_tracing_config
+                data = request.get_json()
+                output_dir = data.get("output_dir")
+
+                if not output_dir:
+                    return jsonify({"error": "output_dir is required"}), 400
+
+                config = get_tracing_config()
+                if config.set_output_dir(output_dir):
+                    return jsonify({
+                        "status": "success",
+                        "message": "Output directory updated",
+                        "output_dir": output_dir
+                    })
+                else:
+                    return jsonify({"error": "Failed to save output directory"}), 500
+            except Exception as e:
+                logger.error(f"Error updating tracing output dir: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/tracing/reload', methods=['POST'])
+        def reload_tracing_config():
+            """Reload tracing configuration from disk."""
+            try:
+                from modules.tracing_config import get_tracing_config
+                config = get_tracing_config()
+                config.reload()
+                return jsonify({
+                    "status": "success",
+                    "message": "Tracing configuration reloaded",
+                    "config": config.to_dict()
+                })
+            except Exception as e:
+                logger.error(f"Error reloading tracing config: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/tracing/ssh/diagnose/<sut_ip>', methods=['GET'])
+        def diagnose_ssh_connection(sut_ip: str):
+            """
+            Diagnose SSH connectivity to a SUT for trace file pulling.
+
+            Returns detailed diagnostic information including:
+            - TCP port 22 reachability
+            - SSH handshake status
+            - Specific error messages
+            - Recommendations for fixing issues
+            """
+            try:
+                from backend.core.trace_puller import diagnose_sut_ssh
+                from modules.tracing_config import get_tracing_config
+
+                # Get SSH settings from config
+                config = get_tracing_config()
+                ssh_config = config.config.get("ssh", {})
+                ssh_user = ssh_config.get("user") or None
+
+                results = diagnose_sut_ssh(sut_ip, ssh_user)
+                return jsonify({
+                    "status": "success",
+                    "sut_ip": sut_ip,
+                    "diagnostics": results
+                })
+            except Exception as e:
+                logger.error(f"Error diagnosing SSH to {sut_ip}: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/tracing/ssh/test/<sut_ip>', methods=['GET'])
+        def test_ssh_connection(sut_ip: str):
+            """
+            Quick test of SSH connectivity to a SUT.
+
+            Returns simple success/failure without detailed diagnostics.
+            """
+            try:
+                from backend.core.trace_puller import TracePuller
+                from modules.tracing_config import get_tracing_config
+
+                # Get SSH settings from config
+                config = get_tracing_config()
+                ssh_config = config.config.get("ssh", {})
+                ssh_user = ssh_config.get("user") or None
+                ssh_timeout = ssh_config.get("timeout", 60)
+
+                puller = TracePuller(sut_ip, ssh_user, ssh_timeout=ssh_timeout)
+                success, message = puller.test_connection(with_retry=False)
+
+                return jsonify({
+                    "status": "success" if success else "failed",
+                    "sut_ip": sut_ip,
+                    "ssh_user": puller.ssh_user,
+                    "connected": success,
+                    "message": message
+                })
+            except Exception as e:
+                logger.error(f"Error testing SSH to {sut_ip}: {e}")
                 return jsonify({"error": str(e)}), 500

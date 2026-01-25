@@ -77,6 +77,24 @@ const CloseIcon = () => (
   </svg>
 );
 
+const KeyIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+  </svg>
+);
+
+const CheckCircleIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+  </svg>
+);
+
+const XCircleIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+  </svg>
+);
+
 interface HardwareRowProps {
   icon: React.ReactNode;
   label: string;
@@ -199,12 +217,61 @@ export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
               Paired
             </span>
           )}
+          {sut.master_key_installed && (
+            <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-success/10 text-success">
+              SSH Ready
+            </span>
+          )}
           {sut.current_task && (
             <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-warning/10 text-warning">
               Running: {sut.current_task}
             </span>
           )}
         </div>
+
+        {/* SSH Status */}
+        {(sut.ssh_fingerprint || sut.master_key_installed !== undefined) && (
+          <div>
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2 flex items-center gap-2">
+              <KeyIcon />
+              SSH Status
+            </h3>
+            <div className="bg-surface-elevated rounded-lg p-3 space-y-2">
+              {/* Master -> SUT SSH */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-text-secondary">Master → SUT</span>
+                <span className={`flex items-center gap-1 text-sm ${sut.master_key_installed ? 'text-success' : 'text-text-muted'}`}>
+                  {sut.master_key_installed ? <CheckCircleIcon /> : <XCircleIcon />}
+                  {sut.master_key_installed ? 'Ready' : 'Not configured'}
+                </span>
+              </div>
+              {/* SUT -> Master SSH */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-text-secondary">SUT → Master</span>
+                <span className={`flex items-center gap-1 text-sm ${sut.ssh_fingerprint ? 'text-success' : 'text-text-muted'}`}>
+                  {sut.ssh_fingerprint ? <CheckCircleIcon /> : <XCircleIcon />}
+                  {sut.ssh_fingerprint ? 'Registered' : 'Not registered'}
+                </span>
+              </div>
+              {/* Fingerprint */}
+              {sut.ssh_fingerprint && (
+                <div className="pt-2 border-t border-border">
+                  <p className="text-xs text-text-muted">SUT Key Fingerprint</p>
+                  <p className="text-xs font-mono text-text-secondary truncate" title={sut.ssh_fingerprint}>
+                    {sut.ssh_fingerprint}
+                  </p>
+                </div>
+              )}
+              {/* Session ID */}
+              {sut.session_id && (
+                <div className="pt-2 border-t border-border">
+                  <p className="text-xs text-text-muted">Session ID</p>
+                  <p className="text-xs font-mono text-text-secondary">{sut.session_id}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Loading state */}
         {loading && (
@@ -335,6 +402,12 @@ export function SUTDetailPanel({ sut, onClose }: SUTDetailPanelProps) {
           )}
           {sut.paired_at && (
             <p>Paired: {new Date(sut.paired_at).toLocaleString()} by {sut.paired_by || 'user'}</p>
+          )}
+          {sut.master_key_installed_at && (
+            <p>SSH key installed: {new Date(sut.master_key_installed_at).toLocaleString()}</p>
+          )}
+          {sut.last_ip_change && (
+            <p className="text-warning">IP changed: {new Date(sut.last_ip_change).toLocaleString()}</p>
           )}
         </div>
       </div>

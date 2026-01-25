@@ -3,7 +3,7 @@
  */
 
 import { useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Key } from 'lucide-react';
 import { StatusDot } from './DataTable';
 import type { SUT } from '../types';
 
@@ -79,6 +79,9 @@ export function FleetStatusPanel({
                 <div className="flex items-center gap-1.5">
                   <StatusDot status="online" />
                   <span className="truncate">{sut.hostname || sut.ip}</span>
+                  {sut.master_key_installed && (
+                    <span title="SSH Ready"><Key className="w-2.5 h-2.5 text-success" /></span>
+                  )}
                 </div>
                 {sut.current_task && (
                   <span className="text-[10px] text-warning">BUSY</span>
@@ -192,6 +195,9 @@ export function CompactSutCard({ sut, isSelected, onClick }: CompactSutCardProps
         <span className="text-sm font-medium text-text-primary truncate">
           {sut.hostname || sut.ip}
         </span>
+        {sut.master_key_installed && (
+          <span title="SSH Ready"><Key className="w-3 h-3 text-success flex-shrink-0" /></span>
+        )}
       </div>
 
       <div className="flex items-center gap-2 flex-shrink-0">

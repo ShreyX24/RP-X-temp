@@ -50,6 +50,17 @@ class SUTDevice:
     display_name: Optional[str] = None
     cpu_model: Optional[str] = None
 
+    # SSH fields (for bidirectional SSH)
+    ssh_public_key: Optional[str] = None
+    ssh_fingerprint: Optional[str] = None
+    master_key_installed: bool = False
+    master_key_installed_at: Optional[datetime] = None
+
+    # Binding fields (for IP change detection)
+    session_id: Optional[str] = None
+    binding_history: List[dict] = field(default_factory=list)
+    last_ip_change: Optional[datetime] = None
+
     @property
     def success_rate(self) -> float:
         """Calculate ping success rate."""
@@ -104,6 +115,13 @@ class SUTDevice:
             "paired_at": self.paired_at.isoformat() if self.paired_at else None,
             "success_rate": round(self.success_rate, 2),
             "error_count": self.error_count,
+            # SSH fields
+            "ssh_fingerprint": self.ssh_fingerprint,
+            "master_key_installed": self.master_key_installed,
+            "master_key_installed_at": self.master_key_installed_at.isoformat() if self.master_key_installed_at else None,
+            # Binding fields
+            "session_id": self.session_id,
+            "last_ip_change": self.last_ip_change.isoformat() if self.last_ip_change else None,
         }
 
 
@@ -128,7 +146,7 @@ class DevicePersistence:
                 return True
 
             serializable_data = {
-                "version": "1.0",
+                "version": "2.0",
                 "saved_at": datetime.now().isoformat(),
                 "paired_devices": {},
                 "cpu_directory": self.cpu_directory
@@ -139,6 +157,8 @@ class DevicePersistence:
                 device_dict['last_seen'] = device.last_seen.isoformat() if device.last_seen else None
                 device_dict['first_discovered'] = device.first_discovered.isoformat() if device.first_discovered else None
                 device_dict['paired_at'] = device.paired_at.isoformat() if device.paired_at else None
+                device_dict['master_key_installed_at'] = device.master_key_installed_at.isoformat() if device.master_key_installed_at else None
+                device_dict['last_ip_change'] = device.last_ip_change.isoformat() if device.last_ip_change else None
                 device_dict['status'] = device.status.value
                 serializable_data["paired_devices"][device_id] = device_dict
 
@@ -167,14 +187,23 @@ class DevicePersistence:
             devices_data = data.get("paired_devices", {})
 
             for device_id, device_dict in devices_data.items():
+                # Parse datetime fields
                 if device_dict.get('last_seen'):
                     device_dict['last_seen'] = datetime.fromisoformat(device_dict['last_seen'])
                 if device_dict.get('first_discovered'):
                     device_dict['first_discovered'] = datetime.fromisoformat(device_dict['first_discovered'])
                 if device_dict.get('paired_at'):
                     device_dict['paired_at'] = datetime.fromisoformat(device_dict['paired_at'])
+                if device_dict.get('master_key_installed_at'):
+                    device_dict['master_key_installed_at'] = datetime.fromisoformat(device_dict['master_key_installed_at'])
+                if device_dict.get('last_ip_change'):
+                    device_dict['last_ip_change'] = datetime.fromisoformat(device_dict['last_ip_change'])
                 if 'status' in device_dict:
                     device_dict['status'] = SUTStatus(device_dict['status'])
+
+                # Handle backwards compatibility: remove unknown fields
+                known_fields = {f.name for f in SUTDevice.__dataclass_fields__.values()}
+                device_dict = {k: v for k, v in device_dict.items() if k in known_fields}
 
                 device = SUTDevice(**device_dict)
                 paired_devices[device_id] = device
@@ -226,6 +255,30 @@ class DeviceRegistry:
         self.persistence = DevicePersistence(persistence_file)
         self.load_paired_devices_on_startup()
 
+    def _generate_session_id(self) -> str:
+        """Generate a unique session ID for device binding."""
+        import secrets
+        timestamp = datetime.now().strftime("%Y%m%d")
+        random_part = secrets.token_hex(4)
+        return f"{timestamp}_{random_part}"
+
+    def _record_ip_change(self, device: SUTDevice, old_ip: str, new_ip: str) -> None:
+        """Record an IP change in device's binding history."""
+        change_record = {
+            "old_ip": old_ip,
+            "new_ip": new_ip,
+            "changed_at": datetime.now().isoformat(),
+            "old_session_id": device.session_id,
+        }
+        device.binding_history.append(change_record)
+        device.last_ip_change = datetime.now()
+        # Invalidate master key installation (needs re-exchange)
+        device.master_key_installed = False
+        device.master_key_installed_at = None
+        # Generate new session ID
+        device.session_id = self._generate_session_id()
+        logger.info(f"IP change detected for {device.unique_id}: {old_ip} -> {new_ip}, new session: {device.session_id}")
+
     def register_device(
         self,
         ip: str,
@@ -234,14 +287,26 @@ class DeviceRegistry:
         capabilities: List[str] = None,
         hostname: str = "",
         cpu_model: str = None,
-        display_name: str = None
+        display_name: str = None,
+        ssh_public_key: str = None,
+        ssh_fingerprint: str = None,
     ) -> SUTDevice:
         """Register or update a SUT device."""
         capabilities = capabilities or []
+        ip_changed = False
 
         if unique_id in self.devices:
             device = self.devices[unique_id]
             old_status = device.status
+            old_ip = device.ip
+
+            # Check for IP change
+            if old_ip != ip:
+                ip_changed = True
+                self._record_ip_change(device, old_ip, ip)
+                # Remove old IP mapping
+                if old_ip in self.ip_to_id_mapping:
+                    del self.ip_to_id_mapping[old_ip]
 
             device.ip = ip
             device.port = port
@@ -255,6 +320,10 @@ class DeviceRegistry:
                 device.cpu_model = cpu_model
             if display_name:
                 device.display_name = display_name
+            if ssh_public_key:
+                device.ssh_public_key = ssh_public_key
+            if ssh_fingerprint:
+                device.ssh_fingerprint = ssh_fingerprint
 
             if device.status == SUTStatus.OFFLINE:
                 device.status = SUTStatus.ONLINE
@@ -264,9 +333,13 @@ class DeviceRegistry:
                     "device_id": unique_id,
                     "ip": ip,
                     "port": port,
-                    "hostname": hostname
+                    "hostname": hostname,
+                    "ip_changed": ip_changed,
                 })
         else:
+            # Generate initial session ID for new device
+            session_id = self._generate_session_id()
+
             device = SUTDevice(
                 ip=ip,
                 port=port,
@@ -277,21 +350,48 @@ class DeviceRegistry:
                 successful_pings=1,
                 total_pings=1,
                 cpu_model=cpu_model,
-                display_name=display_name
+                display_name=display_name,
+                ssh_public_key=ssh_public_key,
+                ssh_fingerprint=ssh_fingerprint,
+                session_id=session_id,
             )
 
             self.devices[unique_id] = device
-            logger.info(f"New SUT discovered: {unique_id} at {ip}:{port}")
+            logger.info(f"New SUT discovered: {unique_id} at {ip}:{port}, session: {session_id}")
             event_bus.emit(EventType.SUT_DISCOVERED, {
                 "device_id": unique_id,
                 "ip": ip,
                 "port": port,
                 "hostname": hostname,
-                "capabilities": capabilities
+                "capabilities": capabilities,
+                "session_id": session_id,
             })
 
         self.ip_to_id_mapping[ip] = unique_id
         return device
+
+    def update_master_key_status(
+        self,
+        unique_id: str,
+        installed: bool,
+    ) -> bool:
+        """Update the master key installation status for a device."""
+        device = self.get_device_by_id(unique_id)
+        if not device:
+            return False
+
+        device.master_key_installed = installed
+        if installed:
+            device.master_key_installed_at = datetime.now()
+        else:
+            device.master_key_installed_at = None
+
+        logger.info(f"Master key status for {unique_id}: installed={installed}")
+
+        if device.is_paired:
+            self.save_paired_devices()
+
+        return True
 
     def mark_device_offline(self, unique_id: str):
         """Mark a device as offline."""

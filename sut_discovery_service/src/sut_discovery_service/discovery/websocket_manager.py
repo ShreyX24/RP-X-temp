@@ -151,6 +151,13 @@ class WebSocketManager:
             await self.disconnect(sut_id)
             return False
 
+    async def send_to_device(self, sut_id: str, message: Dict[str, Any]) -> bool:
+        """
+        Send message to specific SUT device.
+        Alias for send_command for clarity in SSH-related code.
+        """
+        return await self.send_command(sut_id, message)
+
     async def broadcast(
         self,
         command: Dict[str, Any],

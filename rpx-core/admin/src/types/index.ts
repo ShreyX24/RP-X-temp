@@ -14,6 +14,13 @@ export interface SUT {
   is_paired?: boolean;
   paired_at?: string | null;
   paired_by?: string | null;
+  // SSH fields (bidirectional SSH)
+  ssh_fingerprint?: string | null;
+  master_key_installed?: boolean;
+  master_key_installed_at?: string | null;
+  // Binding fields (IP change detection)
+  session_id?: string | null;
+  last_ip_change?: string | null;
 }
 
 // Game configuration types
