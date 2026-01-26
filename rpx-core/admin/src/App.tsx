@@ -8,6 +8,7 @@ import { Runs } from './pages/Runs';
 import { Queue } from './pages/Queue';
 import { WorkflowBuilder } from './pages/WorkflowBuilder';
 import { Settings } from './pages/Settings';
+import { RunStoryView } from './pages/RunStoryView';
 import { useServiceHealth, useRuns } from './hooks';
 import { ToastProvider } from './contexts/ToastContext';
 import { ToastContainer } from './components/shared/ToastContainer';
@@ -65,8 +66,8 @@ function App() {
   const isMobile = useIsMobile();
   const location = useLocation();
 
-  // Hide header/footer for WorkflowBuilder (fullscreen mode)
-  const isWorkflowBuilder = location.pathname === '/workflow';
+  // Hide header/footer for WorkflowBuilder and Story View (fullscreen mode)
+  const isFullscreenPage = location.pathname === '/workflow' || location.pathname.startsWith('/story/');
 
   // Service health for footer status bar - poll every 10s since /api/status takes ~3s
   const { services } = useServiceHealth(10000);
@@ -86,7 +87,7 @@ function App() {
     <ToastProvider>
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header - Hide on mobile and WorkflowBuilder */}
-      {!isMobile && !isWorkflowBuilder && (
+      {!isMobile && !isFullscreenPage && (
         <header className="bg-surface border-b border-border sticky top-0 z-50">
           <div className="px-4 lg:px-6">
             <div className="flex items-center justify-between h-14">
@@ -164,11 +165,12 @@ function App() {
           <Route path="/queue" element={<Queue />} />
           <Route path="/workflow" element={<WorkflowBuilder />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/story/:runId" element={<RunStoryView />} />
         </Routes>
       </main>
 
       {/* Footer - Hide on mobile and WorkflowBuilder */}
-      {!isMobile && !isWorkflowBuilder && (
+      {!isMobile && !isFullscreenPage && (
         <footer className="bg-surface border-t border-border sticky bottom-0 z-40 px-4 py-2.5">
           <div className="flex items-center justify-center gap-6">
             {/* Raptor X Backend */}

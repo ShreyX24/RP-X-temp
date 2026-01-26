@@ -79,8 +79,8 @@ interface UseWebSocketOptions {
 export function useWebSocket(options: UseWebSocketOptions = {}) {
   const {
     autoConnect = true,
-    reconnectionAttempts = 5,
-    reconnectionDelay = 2000,
+    reconnectionAttempts = Infinity, // Keep trying to reconnect
+    reconnectionDelay = 1000,        // Start with 1 second delay
   } = options;
 
   const [isConnected, setIsConnected] = useState(false);
@@ -100,14 +100,18 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     if (!autoConnect) return;
 
     // Connect to the same origin as the page (Vite proxy will handle it)
-    // Use polling first - WebSocket through Vite proxy causes 500 errors
+    // Start with polling for reliability, then upgrade to websocket if possible
     const socket = io({
       path: '/socket.io/',
       transports: ['polling', 'websocket'],
       reconnectionAttempts,
       reconnectionDelay,
+      reconnectionDelayMax: 5000,     // Max 5 seconds between reconnection attempts
+      randomizationFactor: 0.5,       // Add randomization to avoid thundering herd
       autoConnect: true,
-      upgrade: false,  // Don't upgrade from polling to websocket (avoids proxy issues)
+      upgrade: true,                  // Allow upgrade from polling to websocket
+      rememberUpgrade: true,          // Remember if websocket worked
+      timeout: 20000,                 // Connection timeout 20 seconds
     });
 
     socketRef.current = socket;
@@ -117,14 +121,40 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       setConnectionError(null);
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
       setIsConnected(false);
+      // Log disconnect reason for debugging
+      if (reason === 'io server disconnect') {
+        // Server disconnected us, need to manually reconnect
+        console.warn('[WebSocket] Server disconnected, reconnecting...');
+        socket.connect();
+      } else if (reason === 'transport close' || reason === 'transport error') {
+        // Network issue, socket.io will auto-reconnect
+        console.warn('[WebSocket] Transport issue, auto-reconnecting...');
+      }
     });
 
     socket.on('connect_error', (error) => {
-      console.error('[WebSocket] Connection error:', error.message);
+      // Only log first error, not every reconnection attempt
+      if (!connectionError) {
+        console.warn('[WebSocket] Connection error:', error.message);
+      }
       setConnectionError(error.message);
       setIsConnected(false);
+    });
+
+    // Reconnection events
+    socket.io.on('reconnect', (attempt) => {
+      console.log(`[WebSocket] Reconnected after ${attempt} attempts`);
+      setConnectionError(null);
+    });
+
+    socket.io.on('reconnect_attempt', () => {
+      // Silent - socket.io handles this automatically
+    });
+
+    socket.io.on('reconnect_error', () => {
+      // Silent - will keep retrying
     });
 
     // Automation events (run started/completed/failed)

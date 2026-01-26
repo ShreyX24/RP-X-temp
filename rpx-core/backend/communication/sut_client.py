@@ -5,9 +5,13 @@ SUT client for communication with SUT devices
 
 import logging
 import requests
-from typing import Dict, Any, Optional, List
+import time
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
 import json
 from dataclasses import dataclass
+
+if TYPE_CHECKING:
+    from ..core.timeline_manager import TimelineManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,18 +27,58 @@ class ActionResult:
 
 class SUTClient:
     """Client for communicating with SUT devices"""
-    
+
     def __init__(self, timeout: float = 10.0):
         self.session = requests.Session()
         self.timeout = timeout
-        
+
+        # Timeline tracking for Story View (optional)
+        self._timeline: Optional['TimelineManager'] = None
+        self._linked_event_id: Optional[str] = None
+
         # Set reasonable defaults
         self.session.headers.update({
             'Content-Type': 'application/json',
             'User-Agent': 'Gemma-Backend-Client/2.0'
         })
-        
+
         logger.debug("SUT client initialized")
+
+    def set_timeline(self, timeline: 'TimelineManager', linked_event_id: str = None):
+        """Set timeline for tracking service calls (for Story View)
+
+        Args:
+            timeline: TimelineManager instance for tracking
+            linked_event_id: Optional event ID to link calls to (e.g., step_5)
+        """
+        self._timeline = timeline
+        self._linked_event_id = linked_event_id
+
+    def clear_timeline(self):
+        """Clear timeline tracking"""
+        self._timeline = None
+        self._linked_event_id = None
+
+    def _track_call_start(self, ip: str, endpoint: str, method: str = "GET") -> Optional[str]:
+        """Track service call start if timeline is set"""
+        if not self._timeline:
+            return None
+        return self._timeline.service_call_started(
+            source_service="rpx_backend",
+            target_service=f"sut_{ip}",
+            endpoint=endpoint,
+            method=method,
+            linked_event_id=self._linked_event_id,
+        )
+
+    def _track_call_end(self, event_id: Optional[str], success: bool, duration_ms: int, error: str = None):
+        """Track service call completion if timeline is set"""
+        if not self._timeline or not event_id:
+            return
+        if success:
+            self._timeline.service_call_completed(event_id, duration_ms=duration_ms)
+        else:
+            self._timeline.service_call_failed(event_id, error=error or "Unknown error", duration_ms=duration_ms)
         
     def get_status(self, ip: str, port: int = 8080) -> ActionResult:
         """Get status from SUT device"""
@@ -65,20 +109,23 @@ class SUTClient:
             
     def take_screenshot(self, ip: str, port: int = 8080, save_path: Optional[str] = None) -> ActionResult:
         """Take a screenshot from SUT device"""
+        event_id = self._track_call_start(ip, "/screenshot", "GET")
+        start_time = time.time()
         try:
             response = self.session.get(
                 f"http://{ip}:{port}/screenshot",
                 timeout=self.timeout
             )
-            
+            duration_ms = int((time.time() - start_time) * 1000)
+
             if response.status_code == 200:
                 screenshot_data = response.content
-                
+
                 result_data = {
                     'content_type': response.headers.get('content-type', 'image/png'),
                     'size': len(screenshot_data)
                 }
-                
+
                 if save_path:
                     try:
                         with open(save_path, 'wb') as f:
@@ -86,19 +133,24 @@ class SUTClient:
                         result_data['saved_to'] = save_path
                     except IOError as e:
                         logger.warning(f"Failed to save screenshot to {save_path}: {e}")
-                        
+
+                self._track_call_end(event_id, True, duration_ms)
                 return ActionResult(
                     success=True,
                     data=result_data,
                     response_time=response.elapsed.total_seconds()
                 )
             else:
+                error = f"HTTP {response.status_code}: {response.text}"
+                self._track_call_end(event_id, False, duration_ms, error)
                 return ActionResult(
                     success=False,
-                    error=f"HTTP {response.status_code}: {response.text}"
+                    error=error
                 )
-                
+
         except requests.RequestException as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            self._track_call_end(event_id, False, duration_ms, str(e))
             return ActionResult(
                 success=False,
                 error=str(e)
@@ -148,20 +200,25 @@ class SUTClient:
             
     def perform_action(self, ip: str, port: int, action: Dict[str, Any]) -> ActionResult:
         """Perform an action on SUT device"""
+        action_type = action.get('type', 'action')
+        event_id = self._track_call_start(ip, f"/action ({action_type})", "POST")
+        start_time = time.time()
         try:
             response = self.session.post(
                 f"http://{ip}:{port}/action",
                 json=action,
                 timeout=self.timeout
             )
-            
+            duration_ms = int((time.time() - start_time) * 1000)
+
             if response.status_code == 200:
                 try:
                     data = response.json()
                 except:
                     # Some actions might return empty response
                     data = {}
-                    
+
+                self._track_call_end(event_id, True, duration_ms)
                 return ActionResult(
                     success=True,
                     data=data,
@@ -175,13 +232,16 @@ class SUTClient:
                         error_msg += f": {error_data['error']}"
                 except:
                     error_msg += f": {response.text}"
-                    
+
+                self._track_call_end(event_id, False, duration_ms, error_msg)
                 return ActionResult(
                     success=False,
                     error=error_msg
                 )
-                
+
         except requests.RequestException as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            self._track_call_end(event_id, False, duration_ms, str(e))
             return ActionResult(
                 success=False,
                 error=str(e)

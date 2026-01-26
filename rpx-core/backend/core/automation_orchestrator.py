@@ -196,6 +196,50 @@ class StepProgressCallback:
             }
         })
 
+    def on_element_matched(
+        self,
+        step_number: int,
+        expected_element: Dict[str, Any],
+        matched_element: Dict[str, Any] = None,
+        click_coordinates: Dict[str, int] = None,
+        screenshot_index: int = None,
+    ):
+        """Called when an element is matched during step execution (for Story View).
+
+        Args:
+            step_number: Current step number
+            expected_element: What we were looking for (from YAML: type, text, text_match)
+            matched_element: What OmniParser found (bbox, content, type, confidence)
+            click_coordinates: Where we clicked (x, y pixels)
+            screenshot_index: Index of the screenshot used for this step
+        """
+        # Store element match data for this step
+        if not hasattr(self, '_element_matches'):
+            self._element_matches = {}
+
+        self._element_matches[step_number] = {
+            'expected_element': expected_element,
+            'matched_element': matched_element,
+            'click_coordinates': click_coordinates,
+            'screenshot_index': screenshot_index,
+        }
+
+        # Update timeline with element match metadata if available
+        if self.timeline:
+            self.timeline.step_with_element_match(
+                step_num=step_number,
+                description=getattr(self, '_current_step_description', f'Step {step_number}'),
+                expected_element=expected_element,
+                matched_element=matched_element,
+                click_coordinates=click_coordinates,
+                screenshot_index=screenshot_index,
+                total_steps=self.total_steps,
+            )
+
+    def get_element_matches(self) -> Dict[int, Dict[str, Any]]:
+        """Get all element match data collected during run (for Story View API)."""
+        return getattr(self, '_element_matches', {})
+
     def on_tracing_started(self, agent_name: str, pid: int, output_path: str):
         """Called when a tracing agent starts successfully"""
         if self.timeline:

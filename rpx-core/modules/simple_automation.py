@@ -1032,6 +1032,38 @@ class SimpleAutomation:
                 logger.info(f"Found target element: {target_element.element_type} '{element_text}' at ({target_element.x}, {target_element.y})")
                 logger.info("=========================================================")
 
+                # Report element match to progress callback (for Story View)
+                if self.progress_callback and hasattr(self.progress_callback, 'on_element_matched'):
+                    try:
+                        # Compute click coordinates (center of element)
+                        click_x = target_element.x + target_element.width // 2
+                        click_y = target_element.y + target_element.height // 2
+
+                        # Build matched element data
+                        matched_element_data = {
+                            'bbox': [target_element.x, target_element.y,
+                                     target_element.x + target_element.width,
+                                     target_element.y + target_element.height],
+                            'bbox_normalized': None,  # Would need screen dimensions
+                            'content': target_element.element_text or '',
+                            'type': target_element.element_type,
+                            'confidence': target_element.confidence,
+                        }
+
+                        self.progress_callback.on_element_matched(
+                            step_number=step_num,
+                            expected_element={
+                                'find_type': step["find"].get('type', 'any'),
+                                'find_text': step["find"].get('text', ''),
+                                'text_match': step["find"].get('text_match', 'contains'),
+                            },
+                            matched_element=matched_element_data,
+                            click_coordinates={'x': click_x, 'y': click_y},
+                            screenshot_index=step_num,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to report element match: {e}")
+
         
         # 2. EXECUTE ACTION
         if "action" in step:

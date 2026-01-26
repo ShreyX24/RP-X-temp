@@ -32,11 +32,17 @@ def safe_emit(socketio: SocketIO, event: str, data: Any, room: str = None, **kwa
         socketio.emit(event, data, room=room, **kwargs)
         return True
     except KeyError as e:
-        if 'disconnected' in str(e).lower():
-            logger.debug(f"Client disconnected during emit to room={room}: {e}")
+        if 'disconnected' in str(e).lower() or 'session' in str(e).lower():
+            # This is expected when clients disconnect - log at debug level
+            logger.debug(f"Client disconnected during emit to room={room}")
             return False
         raise
     except Exception as e:
+        # Only log unexpected errors at warning level
+        error_str = str(e).lower()
+        if 'disconnected' in error_str or 'session' in error_str or 'closed' in error_str:
+            logger.debug(f"Client disconnected during emit {event}")
+            return False
         logger.warning(f"Error emitting {event} to room={room}: {e}")
         return False
 
@@ -86,7 +92,8 @@ class WebSocketHandler:
         @self.socketio.on('connect')
         def handle_connect(auth=None):
             client_id = request.sid
-            logger.info(f"Frontend client connected: {client_id}")
+            # Log at debug level to reduce noise from frequent reconnections
+            logger.debug(f"Frontend client connected: {client_id}")
             
             # Store client info
             self.connected_clients[client_id] = {
@@ -109,11 +116,17 @@ class WebSocketHandler:
         @self.socketio.on('disconnect')
         def handle_disconnect():
             client_id = request.sid
-            logger.info(f"Frontend client disconnected: {client_id}")
-            
+            # Only log at debug level to reduce noise from frequent disconnects
+            logger.debug(f"Frontend client disconnected: {client_id}")
+
             # Clean up client data
             if client_id in self.connected_clients:
                 del self.connected_clients[client_id]
+
+            # Log count of remaining clients for monitoring
+            remaining = len(self.connected_clients)
+            if remaining > 0:
+                logger.debug(f"Remaining connected clients: {remaining}")
                 
         @self.socketio.on('subscribe_to_device')
         def handle_device_subscription(data):

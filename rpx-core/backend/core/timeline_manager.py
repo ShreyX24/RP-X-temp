@@ -99,6 +99,11 @@ class TimelineEventType(Enum):
     OCR_PROCESSING = "ocr_processing"
     OCR_COMPLETED = "ocr_completed"
 
+    # Service-to-service communication (for Story View)
+    SERVICE_CALL_STARTED = "service_call_started"
+    SERVICE_CALL_COMPLETED = "service_call_completed"
+    SERVICE_CALL_FAILED = "service_call_failed"
+
     # Generic
     INFO = "info"
     WARNING = "warning"
@@ -872,4 +877,166 @@ class TimelineManager:
             message,
             status=TimelineEventStatus.FAILED,
             metadata={'error': error} if error else None
+        )
+
+    # ===== Service Call Events (for Story View) =====
+
+    def service_call_started(
+        self,
+        source_service: str,
+        target_service: str,
+        endpoint: str,
+        method: str = "POST",
+        linked_event_id: str = None,
+    ) -> str:
+        """Log service call started and return the event_id for tracking
+
+        Args:
+            source_service: The service making the call (e.g., "rpx_backend")
+            target_service: The service being called (e.g., "omniparser", "sut", "queue_service")
+            endpoint: The API endpoint being called (e.g., "/parse/", "/screenshot")
+            method: HTTP method (GET, POST, etc.)
+            linked_event_id: Optional event ID this call is associated with (e.g., step_5)
+
+        Returns:
+            The event_id for this service call (use to complete/fail the call)
+        """
+        event_id = self._generate_event_id("svc")
+        msg = f"{source_service} → {target_service}: {method} {endpoint}"
+
+        self.add_event(
+            event_id,
+            TimelineEventType.SERVICE_CALL_STARTED,
+            msg,
+            status=TimelineEventStatus.IN_PROGRESS,
+            metadata={
+                'source_service': source_service,
+                'target_service': target_service,
+                'endpoint': endpoint,
+                'method': method,
+                'linked_event_id': linked_event_id,
+            },
+            group="service_calls"
+        )
+        return event_id
+
+    def service_call_completed(
+        self,
+        event_id: str,
+        duration_ms: int = None,
+        response_summary: str = None,
+    ):
+        """Log service call completed
+
+        Args:
+            event_id: The event_id returned from service_call_started
+            duration_ms: How long the call took
+            response_summary: Brief description of response (optional)
+        """
+        metadata = {}
+        if duration_ms is not None:
+            metadata['duration_ms'] = duration_ms
+        if response_summary:
+            metadata['response_summary'] = response_summary
+
+        event = self._events.get(event_id)
+        msg = None
+        if event:
+            source = event.metadata.get('source_service', '?')
+            target = event.metadata.get('target_service', '?')
+            endpoint = event.metadata.get('endpoint', '?')
+            duration_str = f" ({duration_ms}ms)" if duration_ms else ""
+            msg = f"{source} → {target}: {endpoint} completed{duration_str}"
+
+        return self.add_event(
+            f"{event_id}_done",
+            TimelineEventType.SERVICE_CALL_COMPLETED,
+            msg or f"Service call {event_id} completed",
+            status=TimelineEventStatus.COMPLETED,
+            metadata=metadata,
+            replaces=event_id,
+            group="service_calls"
+        )
+
+    def service_call_failed(
+        self,
+        event_id: str,
+        error: str,
+        duration_ms: int = None,
+    ):
+        """Log service call failed
+
+        Args:
+            event_id: The event_id returned from service_call_started
+            error: Error message
+            duration_ms: How long before the call failed
+        """
+        metadata = {'error': error}
+        if duration_ms is not None:
+            metadata['duration_ms'] = duration_ms
+
+        event = self._events.get(event_id)
+        msg = None
+        if event:
+            source = event.metadata.get('source_service', '?')
+            target = event.metadata.get('target_service', '?')
+            endpoint = event.metadata.get('endpoint', '?')
+            msg = f"{source} → {target}: {endpoint} failed - {error}"
+
+        return self.add_event(
+            f"{event_id}_failed",
+            TimelineEventType.SERVICE_CALL_FAILED,
+            msg or f"Service call {event_id} failed: {error}",
+            status=TimelineEventStatus.FAILED,
+            metadata=metadata,
+            replaces=event_id,
+            group="service_calls"
+        )
+
+    def step_with_element_match(
+        self,
+        step_num: int,
+        description: str,
+        expected_element: Dict[str, Any],
+        matched_element: Dict[str, Any] = None,
+        click_coordinates: Dict[str, int] = None,
+        screenshot_index: int = None,
+        total_steps: int = None,
+    ):
+        """Log step with element matching details for Story View
+
+        Args:
+            step_num: Step number
+            description: Step description
+            expected_element: What we were looking for (find_type, find_text, text_match)
+            matched_element: What OmniParser found (bbox, content, type, confidence)
+            click_coordinates: Where we clicked (x, y)
+            screenshot_index: Index of the screenshot for this step
+            total_steps: Total number of steps
+        """
+        metadata = {
+            'step': step_num,
+            'description': description,
+            'total': total_steps,
+            'expected_element': expected_element,
+        }
+
+        if matched_element:
+            metadata['matched_element'] = matched_element
+        if click_coordinates:
+            metadata['click_coordinates'] = click_coordinates
+        if screenshot_index is not None:
+            metadata['screenshot_index'] = screenshot_index
+
+        msg = f"Step {step_num}"
+        if total_steps:
+            msg += f"/{total_steps}"
+        msg += f": {description}"
+
+        return self.add_event(
+            f"step_{step_num}",
+            TimelineEventType.STEP_STARTED,
+            msg,
+            metadata=metadata,
+            group="steps"
         )

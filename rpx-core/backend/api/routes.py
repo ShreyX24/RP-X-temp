@@ -1563,6 +1563,207 @@ class APIRoutes:
                 logger.error(f"Error getting timeline for run {run_id}: {e}")
                 return jsonify({"error": str(e)}), 500
 
+        @app.route('/api/runs/<run_id>/story', methods=['GET'])
+        def get_run_story(run_id):
+            """Get comprehensive run story data for the Story View visualization.
+
+            Returns aggregated data including:
+            - Timeline events (with service calls and element matches)
+            - Screenshot paths and OmniParser JSON paths
+            - Run metadata (game, SUT, status)
+            """
+            try:
+                import json
+                from pathlib import Path
+                from ..core.run_manager import RunStatus
+
+                if not hasattr(self, 'run_manager') or self.run_manager is None:
+                    return jsonify({"error": "Run manager not available"}), 500
+
+                # Get run info from manifest or active run
+                manifest = self.run_manager.storage.get_manifest(run_id)
+                active_run = self.run_manager.get_run(run_id)
+
+                if not manifest and not active_run:
+                    # Try reloading history
+                    self.run_manager.storage.load_run_history()
+                    manifest = self.run_manager.storage.get_manifest(run_id)
+
+                if not manifest and not active_run:
+                    return jsonify({"error": f"Run {run_id} not found"}), 404
+
+                # Extract data from manifest or active run
+                # RunManifest has: config.games[0], sut.ip, created_at, config.iterations
+                # ActiveRun has: game_name, sut_ip, started_at, iterations
+                if manifest:
+                    game_name = manifest.config.games[0] if manifest.config and manifest.config.games else "Unknown"
+                    sut_ip = manifest.sut.ip if manifest.sut else None
+                    status = manifest.status
+                    started_at = manifest.created_at
+                    completed_at = manifest.completed_at
+                    iterations = manifest.config.iterations if manifest.config else 1
+                elif active_run:
+                    game_name = active_run.game_name
+                    sut_ip = active_run.sut_ip
+                    status = active_run.status.value if hasattr(active_run.status, 'value') else str(active_run.status)
+                    started_at = active_run.started_at.isoformat() if active_run.started_at else None
+                    completed_at = active_run.completed_at.isoformat() if active_run.completed_at else None
+                    iterations = active_run.iterations
+                else:
+                    game_name = "Unknown"
+                    sut_ip = None
+                    status = "unknown"
+                    started_at = None
+                    completed_at = None
+                    iterations = 1
+
+                # Build response
+                response = {
+                    "run_id": run_id,
+                    "game_name": game_name,
+                    "sut_ip": sut_ip,
+                    "status": status,
+                    "started_at": started_at,
+                    "completed_at": completed_at,
+                    "iterations": iterations,
+                    "timeline_events": [],
+                    "service_calls": [],
+                    "element_matches": [],
+                    "screenshots": [],
+                }
+
+                # Get run directory
+                run_dir = self.run_manager.storage.get_run_dir(run_id)
+
+                # Load timeline events
+                if active_run and hasattr(active_run, 'timeline') and active_run.timeline:
+                    # Get events from active run's timeline (in memory)
+                    events = active_run.timeline.get_events_dict()
+                elif run_dir and run_dir.exists():
+                    # Load from timeline.json file
+                    timeline_file = run_dir / 'timeline.json'
+                    if timeline_file.exists():
+                        try:
+                            with open(timeline_file, 'r') as f:
+                                timeline_data = json.load(f)
+                            events = timeline_data.get('events', [])
+                        except Exception as e:
+                            logger.warning(f"Error reading timeline file: {e}")
+                            events = []
+                    else:
+                        events = []
+                else:
+                    events = []
+
+                response["timeline_events"] = events
+
+                # Extract service calls from timeline events
+                service_calls = []
+                for event in events:
+                    if event.get('event_type', '').startswith('service_call_'):
+                        service_calls.append({
+                            'call_id': event.get('event_id'),
+                            'timestamp': event.get('timestamp'),
+                            'source': event.get('metadata', {}).get('source_service'),
+                            'target': event.get('metadata', {}).get('target_service'),
+                            'endpoint': event.get('metadata', {}).get('endpoint'),
+                            'method': event.get('metadata', {}).get('method', 'POST'),
+                            'duration_ms': event.get('metadata', {}).get('duration_ms') or event.get('duration_ms'),
+                            'status': event.get('status'),
+                            'linked_event_id': event.get('metadata', {}).get('linked_event_id'),
+                        })
+                response["service_calls"] = service_calls
+
+                # Extract element matches from step events
+                element_matches = []
+                for event in events:
+                    if event.get('event_type') == 'step_started':
+                        metadata = event.get('metadata', {})
+                        if metadata.get('expected_element') or metadata.get('matched_element'):
+                            element_matches.append({
+                                'step': metadata.get('step'),
+                                'description': metadata.get('description'),
+                                'expected': metadata.get('expected_element'),
+                                'actual': metadata.get('matched_element'),
+                                'click_coordinates': metadata.get('click_coordinates'),
+                                'screenshot_index': metadata.get('screenshot_index'),
+                            })
+                response["element_matches"] = element_matches
+
+                # Collect screenshot info from run directory
+                screenshots = []
+                if run_dir and run_dir.exists():
+                    # Search in iteration directories
+                    for iter_dir in sorted(run_dir.glob('*-run-*')):
+                        screenshots_dir = iter_dir / 'screenshots'
+                        if screenshots_dir.exists():
+                            iteration_match = iter_dir.name  # e.g., "perf-run-1"
+                            for screenshot_file in sorted(screenshots_dir.glob('screenshot_*.png')):
+                                # Extract step number from filename
+                                step_match = screenshot_file.stem.replace('screenshot_', '')
+                                try:
+                                    step_num = int(step_match)
+                                except ValueError:
+                                    step_num = None
+
+                                screenshot_info = {
+                                    'index': step_num,
+                                    'step': step_num,
+                                    'path': f"/api/runs/{run_id}/screenshots/step_{step_num}.png" if step_num else str(screenshot_file.name),
+                                    'iteration': iteration_match,
+                                }
+
+                                # Check for OmniParser JSON
+                                omniparser_file = screenshots_dir / f"screenshot_{step_num}.json"
+                                if omniparser_file.exists():
+                                    screenshot_info['omniparser_path'] = f"/api/runs/{run_id}/omniparser/{iteration_match}/screenshot_{step_num}.json"
+
+                                screenshots.append(screenshot_info)
+
+                response["screenshots"] = screenshots
+
+                return jsonify(response)
+
+            except Exception as e:
+                logger.error(f"Error getting story for run {run_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/api/runs/<run_id>/omniparser/<path:filepath>', methods=['GET'])
+        def get_run_omniparser_json(run_id, filepath):
+            """Get OmniParser JSON analysis file from a run"""
+            try:
+                from pathlib import Path
+
+                if not hasattr(self, 'run_manager') or self.run_manager is None:
+                    return jsonify({"error": "Run manager not initialized"}), 500
+
+                run_dir = self.run_manager.storage.get_run_dir(run_id)
+                if not run_dir or not run_dir.exists():
+                    return jsonify({"error": f"Run {run_id} not found"}), 404
+
+                # filepath could be: perf-run-1/screenshot_1.json
+                json_path = run_dir / filepath.replace('/', os.sep)
+
+                # Also check in screenshots subdirectory
+                if not json_path.exists():
+                    parts = filepath.split('/')
+                    if len(parts) >= 2:
+                        json_path = run_dir / parts[0] / 'screenshots' / parts[1]
+
+                if not json_path.exists():
+                    return jsonify({"error": f"OmniParser file not found: {filepath}"}), 404
+
+                with open(json_path, 'r') as f:
+                    data = json.load(f)
+
+                return jsonify(data)
+
+            except Exception as e:
+                logger.error(f"Error getting OmniParser JSON for run {run_id}: {e}")
+                return jsonify({"error": str(e)}), 500
+
         @app.route('/api/runs/<run_id>/screenshots/<path:filename>', methods=['GET'])
         def get_run_screenshot(run_id, filename):
             """Get a screenshot file from a run's screenshots directory"""
