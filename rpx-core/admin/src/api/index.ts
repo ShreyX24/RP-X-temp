@@ -257,6 +257,82 @@ export async function getRunTimeline(runId: string): Promise<RunTimelineResponse
   return fetchJson<RunTimelineResponse>(`${API_BASE}/runs/${runId}/timeline`);
 }
 
+// Story View types and API
+export interface ServiceCall {
+  call_id: string;
+  timestamp: string;
+  source: string;
+  target: string;
+  endpoint: string;
+  method: string;
+  duration_ms: number | null;
+  status: string;
+  linked_event_id: string | null;
+}
+
+export interface ElementMatch {
+  step: number;
+  description: string;
+  expected: {
+    find_type: string;
+    find_text: string | string[];
+    text_match: string;
+  } | null;
+  actual: {
+    bbox: [number, number, number, number];
+    bbox_normalized: [number, number, number, number] | null;
+    content: string;
+    type: string;
+    confidence: number;
+  } | null;
+  click_coordinates: { x: number; y: number } | null;
+  screenshot_index: number | null;
+}
+
+export interface ScreenshotInfo {
+  index: number | null;
+  step: number | null;
+  path: string;
+  iteration: string;
+  omniparser_path?: string;
+}
+
+export interface RunStoryResponse {
+  run_id: string;
+  game_name: string;
+  sut_ip: string | null;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  iterations: number;
+  timeline_events: TimelineEvent[];
+  service_calls: ServiceCall[];
+  element_matches: ElementMatch[];
+  screenshots: ScreenshotInfo[];
+}
+
+export async function getRunStory(runId: string): Promise<RunStoryResponse> {
+  return fetchJson<RunStoryResponse>(`${API_BASE}/runs/${runId}/story`, {
+    timeout: TIMEOUTS.default,
+  });
+}
+
+export interface OmniParserElement {
+  bbox: [number, number, number, number];
+  type: string;
+  content: string;
+  interactivity?: boolean;
+  confidence: number;
+}
+
+export interface OmniParserResponse {
+  elements: OmniParserElement[];
+}
+
+export async function getRunOmniparserJson(runId: string, filepath: string): Promise<OmniParserResponse> {
+  return fetchJson<OmniParserResponse>(`${API_BASE}/runs/${runId}/omniparser/${filepath}`);
+}
+
 // SUT Action APIs
 export async function getSutStatus(deviceId: string): Promise<unknown> {
   return fetchJson<unknown>(`${API_BASE}/sut/${deviceId}/status`);

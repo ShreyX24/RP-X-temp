@@ -50,7 +50,12 @@ class BackendController:
             cors_allowed_origins="*",
             async_mode='threading',
             logger=config.debug,
-            engineio_logger=config.debug
+            engineio_logger=config.debug,
+            # Heartbeat settings to detect disconnected clients faster
+            ping_timeout=20,      # Wait 20 seconds for pong before considering client dead
+            ping_interval=25,     # Send ping every 25 seconds
+            # Allow both polling and websocket transports
+            # Start with polling for reliability, then upgrade to websocket if possible
         )
 
         # Initialize game manager (always needed)
