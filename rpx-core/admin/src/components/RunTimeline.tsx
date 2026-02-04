@@ -616,6 +616,10 @@ export function RunTimeline({ runId, pollInterval = 2000, compact = false, runSt
       const isReplaced = events.some(e => e.replaces_event_id === event.event_id);
       if (isReplaced) return false;
 
+      // Filter out service_call events - they clutter the timeline
+      // These are tracked internally but shown in the Story view's Service Flow diagram
+      if (event.event_type.startsWith('service_call_')) return false;
+
       // Apply iteration filter if specified
       if (filterIteration !== undefined) {
         const eventIteration = getEventIteration(event);

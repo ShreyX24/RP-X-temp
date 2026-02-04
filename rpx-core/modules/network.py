@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 class NetworkManager:
     """Manages network communication with the SUT."""
-    
+
     def __init__(self, sut_ip: str, sut_port: int):
         """
         Initialize the network manager.
-        
+
         Args:
             sut_ip: IP address of the system under test
             sut_port: Port number for communication
@@ -27,14 +27,49 @@ class NetworkManager:
         self.base_url = f"http://{sut_ip}:{sut_port}"
         self.session = requests.Session()
         logger.info(f"NetworkManager initialized with SUT at {self.base_url}")
-        
+
+        # Timeline tracking for Story View (set via set_timeline)
+        self._timeline = None
+        self._linked_event_id = None
+
         # Verify connection
         try:
             self._check_connection()
         except Exception as e:
             logger.error(f"Failed to connect to SUT: {str(e)}")
             raise
-    
+
+    def set_timeline(self, timeline, linked_event_id: str = None):
+        """Set timeline for tracking service calls (for Story View).
+
+        Args:
+            timeline: TimelineManager instance
+            linked_event_id: Optional event ID to link service calls to (e.g., current step)
+        """
+        self._timeline = timeline
+        self._linked_event_id = linked_event_id
+
+    def _track_service_call(self, endpoint: str, method: str = "POST") -> Optional[str]:
+        """Start tracking a service call. Returns event_id for completion tracking."""
+        if not self._timeline:
+            return None
+        return self._timeline.service_call_started(
+            source_service="rpx_backend",
+            target_service=f"sut_{self.sut_ip}",
+            endpoint=endpoint,
+            method=method,
+            linked_event_id=self._linked_event_id,
+        )
+
+    def _complete_service_call(self, event_id: str, success: bool, duration_ms: int = None, error: str = None, response_summary: str = None):
+        """Complete a tracked service call."""
+        if not self._timeline or not event_id:
+            return
+        if success:
+            self._timeline.service_call_completed(event_id, duration_ms=duration_ms, response_summary=response_summary)
+        else:
+            self._timeline.service_call_failed(event_id, error=error or "Unknown error", duration_ms=duration_ms)
+
     def _check_connection(self) -> bool:
         """
         Check if the SUT is reachable.

@@ -69,6 +69,42 @@ class OmniparserClient:
         self.screen_height = screen_height
         self.session = requests.Session()
         logger.info(f"OmniparserClient initialized with API URL: {api_url} (screen: {screen_width}x{screen_height})")
+
+        # Timeline tracking for Story View (set via set_timeline)
+        self._timeline = None
+        self._linked_event_id = None
+
+    def set_timeline(self, timeline, linked_event_id: str = None):
+        """Set timeline for tracking service calls (for Story View).
+
+        Args:
+            timeline: TimelineManager instance
+            linked_event_id: Optional event ID to link service calls to (e.g., current step)
+        """
+        self._timeline = timeline
+        self._linked_event_id = linked_event_id
+
+    def _track_service_call(self, endpoint: str, method: str = "POST") -> Optional[str]:
+        """Start tracking a service call. Returns event_id for completion tracking."""
+        if not self._timeline:
+            return None
+        host = self.api_url.replace("http://", "").replace("https://", "").split("/")[0]
+        return self._timeline.service_call_started(
+            source_service="rpx_backend",
+            target_service=f"omniparser_{host}",
+            endpoint=endpoint,
+            method=method,
+            linked_event_id=self._linked_event_id,
+        )
+
+    def _complete_service_call(self, event_id: str, success: bool, duration_ms: int = None, error: str = None, response_summary: str = None):
+        """Complete a tracked service call."""
+        if not self._timeline or not event_id:
+            return
+        if success:
+            self._timeline.service_call_completed(event_id, duration_ms=duration_ms, response_summary=response_summary)
+        else:
+            self._timeline.service_call_failed(event_id, error=error or "Unknown error", duration_ms=duration_ms)
         
         # Test connection to the API
         try:
@@ -302,17 +338,37 @@ class OmniparserClient:
             # Send the request to Omniparser API
             config_str = ", ".join(f"{k}={v}" for k, v in effective_config.items() if k != "imgsz" or v is not None)
             logger.info(f"Sending request to {self.api_url}/parse/ with {config_str}")
-            response = self.session.post(
-                f"{self.api_url}/parse/",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=300  # Longer timeout for image processing
-            )
-            response.raise_for_status()
-            
-            # Parse the response
-            response_data = response.json()
-            
+
+            # Track service call for Story View
+            import time as _time
+            call_start = _time.time()
+            service_call_id = self._track_service_call("/parse/", "POST")
+
+            try:
+                response = self.session.post(
+                    f"{self.api_url}/parse/",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=300  # Longer timeout for image processing
+                )
+                response.raise_for_status()
+
+                # Parse the response
+                response_data = response.json()
+
+                # Calculate duration and complete service call tracking
+                duration_ms = int((_time.time() - call_start) * 1000)
+                latency = response_data.get("latency")
+                elements_count = len(response_data.get("parsed_content_list", []))
+                self._complete_service_call(
+                    service_call_id, success=True, duration_ms=duration_ms,
+                    response_summary=f"{elements_count} elements, {latency:.1f}s parse" if latency else f"{elements_count} elements"
+                )
+            except Exception as api_error:
+                duration_ms = int((_time.time() - call_start) * 1000)
+                self._complete_service_call(service_call_id, success=False, duration_ms=duration_ms, error=str(api_error))
+                raise
+
             # Log performance metrics if available
             if "latency" in response_data:
                 logger.info(f"Omniparser processing time: {response_data['latency']:.2f} seconds")

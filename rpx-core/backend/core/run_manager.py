@@ -120,6 +120,9 @@ class AutomationRun:
     disable_tracing: bool = False  # If True, disable SOCWatch/PTAT tracing
     cooldown_seconds: int = 120  # Cooldown between iterations in seconds (default 2 minutes, 0 to disable)
     tracing_agents: Optional[List[str]] = None  # Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
+    # Step range for testing specific steps (skips game launch if start_step > 1)
+    start_step: Optional[int] = None  # Step to start from (1-based). If None, starts from step 1.
+    end_step: Optional[int] = None  # Step to end at (inclusive). If None, runs all steps.
     # Runtime references (not serialized)
     stop_event: Optional[Any] = field(default=None, repr=False)  # threading.Event for cancellation
     timeline: Optional[Any] = field(default=None, repr=False)  # TimelineManager reference
@@ -165,6 +168,8 @@ class AutomationRun:
             'quality': self.quality,
             'resolution': self.resolution,
             'tracing_agents': self.tracing_agents,
+            'start_step': self.start_step,
+            'end_step': self.end_step,
         }
 
 
@@ -430,7 +435,8 @@ class RunManager:
                   campaign_id: Optional[str] = None, quality: Optional[str] = None,
                   resolution: Optional[str] = None, skip_steam_login: bool = False,
                   disable_tracing: bool = False, cooldown_seconds: int = 120,
-                  tracing_agents: Optional[List[str]] = None) -> str:
+                  tracing_agents: Optional[List[str]] = None,
+                  start_step: Optional[int] = None, end_step: Optional[int] = None) -> str:
         """Queue a new automation run
 
         Args:
@@ -445,6 +451,8 @@ class RunManager:
             disable_tracing: If True, disable SOCWatch/PTAT tracing for this run
             cooldown_seconds: Cooldown between iterations in seconds (default 120, 0 to disable)
             tracing_agents: Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
+            start_step: Step to start from (1-based). If None, starts from step 1.
+            end_step: Step to end at (inclusive). If None, runs all steps.
         """
         campaign_info = f" (campaign: {campaign_id[:8]}...)" if campaign_id else ""
         preset_info = f" (preset: {quality}@{resolution})" if quality and resolution else ""
@@ -471,7 +479,9 @@ class RunManager:
                 skip_steam_login=skip_steam_login,
                 disable_tracing=disable_tracing,
                 cooldown_seconds=cooldown_seconds,
-                tracing_agents=tracing_agents
+                tracing_agents=tracing_agents,
+                start_step=start_step,
+                end_step=end_step
             )
             run.progress.total_iterations = iterations
             logger.info(f"Created AutomationRun object for {run_id}")

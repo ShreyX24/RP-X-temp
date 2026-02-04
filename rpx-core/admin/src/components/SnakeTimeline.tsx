@@ -336,11 +336,18 @@ export function SnakeTimeline({ runId, gameName, pollInterval = 2000, className 
     return () => observer.disconnect();
   }, []);
 
-  // Filter out replaced events (keep latest version)
+  // Filter out replaced events and service_call events (keep only milestones)
   const filteredEvents = useMemo(() => {
     return events.filter(event => {
+      // Hide events that have been replaced by newer versions
       const isReplaced = events.some(e => e.replaces_event_id === event.event_id);
-      return !isReplaced;
+      if (isReplaced) return false;
+
+      // Hide service_call events - these are internal HTTP calls, not user-facing milestones
+      // They're tracked for the Story View's Service Flow diagram, not the main timeline
+      if (event.event_type.startsWith('service_call_')) return false;
+
+      return true;
     });
   }, [events]);
 

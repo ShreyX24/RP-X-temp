@@ -22,7 +22,6 @@ import psutil
 from .window import (
     wait_for_window_ready_pywinauto,
     ensure_window_foreground_v2,
-    ensure_window_foreground,
     is_pywinauto_available,
     minimize_other_windows
 )
@@ -649,14 +648,13 @@ def launch_game(
             # Now try to bring to foreground
             logger.info("Attempting to bring window to foreground...")
 
-            # Try modern method first (5s max)
-            # Skip pywinauto - it hangs on fullscreen games
+            # Use clean focus method - no Alt key trick or system manipulation
+            # This avoids cursor lock issues after game focus
             foreground_confirmed = ensure_window_foreground_v2(actual_process.pid, timeout=5, use_pywinauto=False)
 
-            if not foreground_confirmed:
-                # Try legacy method once (5s max)
-                logger.info("Modern foreground failed, trying legacy method...")
-                foreground_confirmed = ensure_window_foreground(actual_process.pid, timeout=5)
+            # Note: We intentionally do NOT fall back to the aggressive
+            # ensure_window_foreground() method as it uses Alt key + SystemParametersInfo
+            # manipulation which can cause cursor lock issues in games like FC6, RDR2
 
             # If still not foreground, that's OK - process is running, startup_wait will handle it
             if not foreground_confirmed:

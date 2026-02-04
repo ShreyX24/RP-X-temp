@@ -139,10 +139,12 @@ function EventCard({
   event,
   isSelected,
   onClick,
+  serviceCallCount = 0,
 }: {
   event: TimelineEvent;
   isSelected: boolean;
   onClick: () => void;
+  serviceCallCount?: number;
 }) {
   const colors = getStatusColors(event.status);
 
@@ -170,9 +172,20 @@ function EventCard({
               </span>
             )}
           </div>
-          <p className={`text-sm truncate ${isSelected ? 'text-text-primary' : 'text-text-secondary'}`}>
-            {event.message}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className={`text-sm truncate flex-1 ${isSelected ? 'text-text-primary' : 'text-text-secondary'}`}>
+              {event.message}
+            </p>
+            {/* Service call count badge */}
+            {serviceCallCount > 0 && (
+              <span
+                className="text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30"
+                title={`${serviceCallCount} service call${serviceCallCount > 1 ? 's' : ''}`}
+              >
+                {serviceCallCount}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </button>
@@ -198,11 +211,25 @@ export function StoryTimeline({
     }
   }, [currentIndex]);
 
-  // Filter out replaced events (show final state only)
+  // Count service calls linked to each event
+  const serviceCallCounts = new Map<string, number>();
+  events.forEach(event => {
+    if (event.event_type.startsWith('service_call_') && event.metadata?.linked_event_id) {
+      const linkedId = event.metadata.linked_event_id;
+      serviceCallCounts.set(linkedId, (serviceCallCounts.get(linkedId) || 0) + 1);
+    }
+  });
+
+  // Filter out replaced events and service_call events (shown in Service Flow instead)
   const visibleEvents = events.filter(event => {
     // Check if this event is replaced by another
     const isReplaced = events.some(e => e.replaces_event_id === event.event_id);
-    return !isReplaced;
+    if (isReplaced) return false;
+
+    // Hide service_call events - they're visualized in the Service Flow diagram
+    if (event.event_type.startsWith('service_call_')) return false;
+
+    return true;
   });
 
   if (visibleEvents.length === 0) {
@@ -230,6 +257,7 @@ export function StoryTimeline({
               event={event}
               isSelected={isSelected}
               onClick={() => onEventSelect(event, index)}
+              serviceCallCount={serviceCallCounts.get(event.event_id) || 0}
             />
           </div>
         );

@@ -151,6 +151,25 @@ export async function checkGameAvailability(
   );
 }
 
+// Game Steps API (for debug mode step selector)
+export interface GameStep {
+  step: number;
+  description: string;
+  action_type: string;
+}
+
+export interface GameStepsResponse {
+  game_name: string;
+  total_steps: number;
+  steps: GameStep[];
+}
+
+export async function getGameSteps(gameName: string): Promise<GameStepsResponse> {
+  return fetchJson<GameStepsResponse>(
+    `${API_BASE}/games/${encodeURIComponent(gameName)}/steps`
+  );
+}
+
 // Automation Run APIs
 export async function getRuns(page: number = 1, perPage: number = 50): Promise<RunsResponse> {
   const params = new URLSearchParams();
@@ -173,7 +192,9 @@ export async function startRun(
   skipSteamLogin: boolean = false,  // If true, skip Steam account management (user pre-logged in)
   disableTracing: boolean = false,  // If true, disable SOCWatch/PTAT tracing for this run
   cooldownSeconds: number = 120,    // Cooldown between iterations in seconds (0 to disable)
-  tracingAgents?: string[]          // Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
+  tracingAgents?: string[],         // Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
+  startStep?: number,               // Debug mode: step to start from (1-based)
+  endStep?: number                  // Debug mode: step to end at (inclusive)
 ): Promise<{ status: string; run_id: string; message: string }> {
   return fetchJson<{ status: string; run_id: string; message: string }>(`${API_BASE}/runs`, {
     method: 'POST',
@@ -187,6 +208,8 @@ export async function startRun(
       disable_tracing: disableTracing,
       cooldown_seconds: cooldownSeconds,
       tracing_agents: tracingAgents,
+      start_step: startStep,
+      end_step: endStep,
     }),
   });
 }
@@ -268,6 +291,7 @@ export interface ServiceCall {
   duration_ms: number | null;
   status: string;
   linked_event_id: string | null;
+  step?: number | null;  // Step number this call is associated with
 }
 
 export interface ElementMatch {
@@ -295,6 +319,7 @@ export interface ScreenshotInfo {
   path: string;
   iteration: string;
   omniparser_path?: string;
+  parsed_image_path?: string; // SOM image with bounding boxes from OmniParser
 }
 
 export interface RunStoryResponse {

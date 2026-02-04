@@ -34,7 +34,7 @@ def _get_post_trace_buffer():
 class SimpleAutomation:
     """Fully modular step-by-step automation with comprehensive action support."""
     
-    def __init__(self, config_path, network, screenshot_mgr, vision_model, stop_event=None, run_dir=None, annotator=None, progress_callback=None, disable_tracing=False, run_id=None, tracing_agents_override=None):
+    def __init__(self, config_path, network, screenshot_mgr, vision_model, stop_event=None, run_dir=None, annotator=None, progress_callback=None, disable_tracing=False, run_id=None, tracing_agents_override=None, start_step=None, end_step=None):
         """
         Initialize with all necessary components.
 
@@ -50,7 +50,12 @@ class SimpleAutomation:
             disable_tracing: If True, disable SOCWatch/PTAT tracing regardless of config
             run_id: Optional run ID for trace output organization
             tracing_agents_override: Optional list of tracing agents to use (overrides YAML config), e.g. ["ptat"] or ["socwatch"]
+            start_step: Optional step number to start from (1-based). If None, starts from step 1.
+            end_step: Optional step number to end at (inclusive). If None, runs all steps.
         """
+        # Step range filtering for testing specific steps
+        self.start_step = start_step
+        self.end_step = end_step
         self._disable_tracing_override = disable_tracing  # Store for later use
         self._tracing_agents_override = tracing_agents_override  # Override agents list
         self.config_path = config_path
@@ -146,6 +151,10 @@ class SimpleAutomation:
     def _is_game_running(self) -> bool:
         """Check if the game process is still running on the SUT.
 
+        In debug mode (start_step > 1), uses direct process checking since the game
+        wasn't launched through the SUT API and thus isn't tracked. In normal mode,
+        uses the SUT's game tracking for accurate status.
+
         Returns:
             True if game is running, False if game was closed/crashed
         """
@@ -153,6 +162,23 @@ class SimpleAutomation:
             # No process tracking, assume game is running
             return True
 
+        # Debug mode: start_step > 1 means game was already running (not launched via API)
+        # Use direct process check instead of SUT tracking which won't have the game registered
+        is_debug_mode = self.start_step is not None and self.start_step > 1
+
+        if is_debug_mode:
+            try:
+                # Direct process check - doesn't require game to be launched via SUT API
+                is_running = self.network.check_process(self.process_id)
+                if not is_running:
+                    logger.warning(f"Game process '{self.process_id}' is no longer running on SUT (debug mode check)")
+                return is_running
+            except Exception as e:
+                logger.warning(f"Could not check game process directly: {e}")
+                # Assume game is still running if we can't check
+                return True
+
+        # Normal mode: use SUT's game tracking (requires game launched via /launch endpoint)
         try:
             status = self.network.get_sut_status()
             game_info = status.get("game", {})
@@ -734,18 +760,41 @@ class SimpleAutomation:
             normalized_steps[str(key)] = value
         steps = normalized_steps
 
-        logger.info(f"Starting enhanced automation with {len(steps)} steps")
+        # Determine step range to execute
+        total_steps = len(steps)
+        actual_start = self.start_step if self.start_step else 1
+        actual_end = self.end_step if self.end_step else total_steps
+
+        # Validate step range
+        if actual_start < 1 or actual_start > total_steps:
+            logger.error(f"Invalid start_step {actual_start}. Must be between 1 and {total_steps}")
+            return False
+        if actual_end < actual_start or actual_end > total_steps:
+            logger.error(f"Invalid end_step {actual_end}. Must be between {actual_start} and {total_steps}")
+            return False
+
+        steps_to_run = actual_end - actual_start + 1
+
+        if self.start_step or self.end_step:
+            logger.info("=========================================================")
+            logger.info(f"STEP RANGE MODE: Running steps {actual_start} to {actual_end} ({steps_to_run} steps)")
+            logger.info("=========================================================")
+        else:
+            logger.info(f"Starting enhanced automation with {total_steps} steps")
 
         # =====================================================================
         # EXECUTE PRE-HOOKS (non-persistent, wait for completion)
+        # Skip pre-hooks if starting from a step other than 1 (game already running)
         # =====================================================================
-        if self.hooks.get("pre"):
+        if self.hooks.get("pre") and actual_start == 1:
             logger.info("=========================================================")
             logger.info("RUNNING PRE-HOOKS")
             logger.info("=========================================================")
             if not self._execute_pre_hooks():
                 logger.error("Critical pre-hook failed, aborting automation")
                 return False
+        elif self.hooks.get("pre") and actual_start > 1:
+            logger.info("Skipping pre-hooks (starting from step > 1, assuming game is already running)")
 
         # =====================================================================
         # START PERSISTENT HOOKS (run throughout automation)
@@ -755,13 +804,13 @@ class SimpleAutomation:
 
         # Update total steps in progress callback (for X/Y display in GUI)
         if self.progress_callback:
-            self.progress_callback.total_steps = len(steps)
+            self.progress_callback.total_steps = steps_to_run
 
-        current_step = 1
+        current_step = actual_start
         max_retries = 3
         retries = 0
-        
-        while current_step <= len(steps):
+
+        while current_step <= actual_end:
             step_key = str(current_step)
 
             if step_key not in steps:
@@ -1460,6 +1509,14 @@ class SimpleAutomation:
             self._start_tracing(duration, tracing_config if isinstance(tracing_config, dict) else None)
 
         try:
+            # Check if refocusing should be disabled for this step
+            # Disable refocus for benchmark steps to prevent cursor lock issues
+            # Can also be explicitly set in step config via no_refocus: true
+            no_refocus = is_benchmark or (step.get("no_refocus", False) if step else False)
+
+            if no_refocus:
+                logger.info("Refocusing disabled for this wait (benchmark/no_refocus)")
+
             if condition:
                 # Conditional wait (wait until condition is met)
                 max_wait = action_config.get("max_wait", 30)
@@ -1467,11 +1524,11 @@ class SimpleAutomation:
 
                 logger.info(f"Waiting up to {max_wait}s for condition: {condition}")
                 # Note: Condition checking would require additional implementation
-                self._interruptible_wait(max_wait)
+                self._interruptible_wait(max_wait, no_refocus=no_refocus)
             else:
                 # Simple wait
                 logger.info(f"Waiting for {duration} seconds")
-                self._interruptible_wait(duration)
+                self._interruptible_wait(duration, no_refocus=no_refocus)
 
             return True
 
@@ -1604,8 +1661,15 @@ class SimpleAutomation:
         trigger = step_config.get("trigger", {})
         return self._find_matching_element(trigger, bounding_boxes) is not None
     
-    def _interruptible_wait(self, duration: int):
-        """Wait that can be interrupted by stop event. Periodically refocuses game."""
+    def _interruptible_wait(self, duration: int, no_refocus: bool = False):
+        """Wait that can be interrupted by stop event. Optionally refocuses game.
+
+        Args:
+            duration: Wait duration in seconds
+            no_refocus: If True, disables periodic refocusing during wait.
+                       Useful for benchmark waits where refocusing can cause
+                       cursor lock issues in some games (FC6, RDR2).
+        """
         for i in range(duration):
             if self.stop_event and self.stop_event.is_set():
                 logger.info("Wait interrupted by stop event")
@@ -1615,7 +1679,8 @@ class SimpleAutomation:
                 logger.info(f"Still waiting... {i}/{duration} seconds elapsed")
             # Refocus game window every 30 seconds during long waits
             # This prevents focus loss from system notifications, Steam overlays, etc.
-            if i > 0 and i % 30 == 0:
+            # Skip if no_refocus is set (e.g., during benchmarks to avoid cursor issues)
+            if not no_refocus and i > 0 and i % 30 == 0:
                 try:
                     self.network.focus_game()
                     logger.debug(f"Refocused game window during wait ({i}/{duration}s)")

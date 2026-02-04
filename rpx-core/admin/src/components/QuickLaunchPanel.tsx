@@ -5,7 +5,7 @@
  */
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { startRun, checkGameAvailability, getSutResolutions, createCampaign, getSutSystemInfoByIp, type SUTSystemInfo } from '../api';
+import { startRun, checkGameAvailability, getSutResolutions, createCampaign, getSutSystemInfoByIp, getGameSteps, type SUTSystemInfo, type GameStep } from '../api';
 import { getPresetMatrix, type PresetMatrixResponse } from '../api/presetManager';
 import type { SUT, GameConfig, SutDisplayResolution } from '../types';
 
@@ -34,6 +34,10 @@ interface LastRunSettings {
   tracingAgents?: string[];  // Selected tracing agents (default: all)
   cooldownSeconds: number;  // Cooldown between iterations/runs (0 to disable)
   timestamp: number;  // When the run was started
+  // Debug mode settings
+  debugMode?: boolean;
+  startStep?: number;
+  endStep?: number;
 }
 
 const LAST_RUN_STORAGE_KEY = 'rpx_last_run_settings';
@@ -209,6 +213,65 @@ function getMaxResolution(resolutions: SutDisplayResolution[]): SutDisplayResolu
   );
 }
 
+// Step Selector component with arrows and description
+interface StepSelectorProps {
+  label: string;
+  value: number;
+  onChange: (step: number) => void;
+  steps: GameStep[];
+  minStep?: number;
+  maxStep?: number;
+  disabled?: boolean;
+}
+
+function StepSelector({ label, value, onChange, steps, minStep = 1, maxStep, disabled }: StepSelectorProps) {
+  const effectiveMax = maxStep ?? steps.length;
+  const currentStep = steps.find(s => s.step === value);
+
+  const canGoLeft = value > minStep;
+  const canGoRight = value < effectiveMax;
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[10px] text-warning uppercase font-medium w-10">{label}</span>
+      <button
+        onClick={() => canGoLeft && onChange(value - 1)}
+        disabled={disabled || !canGoLeft}
+        className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${
+          canGoLeft && !disabled
+            ? 'bg-surface-elevated border border-warning/50 text-warning hover:bg-warning/20'
+            : 'bg-surface border border-border/30 text-text-muted/30 cursor-not-allowed'
+        }`}
+        title="Previous step"
+      >
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+      </button>
+      <div className="flex items-center gap-2 px-2 py-1 bg-surface-elevated border border-warning/50 rounded min-w-[200px]">
+        <span className="text-sm font-bold text-warning w-6 text-center">{value}</span>
+        <span className="text-xs text-text-secondary truncate flex-1" title={currentStep?.description}>
+          {currentStep?.description || 'Loading...'}
+        </span>
+      </div>
+      <button
+        onClick={() => canGoRight && onChange(value + 1)}
+        disabled={disabled || !canGoRight}
+        className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${
+          canGoRight && !disabled
+            ? 'bg-surface-elevated border border-warning/50 text-warning hover:bg-warning/20'
+            : 'bg-surface border border-border/30 text-text-muted/30 cursor-not-allowed'
+        }`}
+        title="Next step"
+      >
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 export function QuickLaunchPanel({
   devices,
   games,
@@ -236,6 +299,13 @@ export function QuickLaunchPanel({
   const [disableTracing, setDisableTracing] = useState(false);  // Disable SOCWatch/PTAT tracing
   const [tracingAgents, setTracingAgents] = useState<string[]>(['socwatch', 'ptat']);  // Selected tracing agents
   const [cooldownSeconds, setCooldownSeconds] = useState(120);  // Cooldown between iterations/runs (0 to disable)
+
+  // Debug mode - for testing specific automation steps
+  const [debugMode, setDebugMode] = useState(false);
+  const [startStep, setStartStep] = useState<number>(1);
+  const [endStep, setEndStep] = useState<number>(1);
+  const [gameSteps, setGameSteps] = useState<GameStep[]>([]);
+  const [loadingSteps, setLoadingSteps] = useState(false);
 
   // Available tracing agents
   const AVAILABLE_TRACING_AGENTS = [
@@ -418,6 +488,42 @@ export function QuickLaunchPanel({
     fetchMatrix();
   }, [firstSelectedGame?.preset_id]);
 
+  // Fetch game steps when debug mode is enabled and game is selected
+  useEffect(() => {
+    if (!debugMode || !firstSelectedGame?.name) {
+      setGameSteps([]);
+      return;
+    }
+
+    const fetchSteps = async () => {
+      setLoadingSteps(true);
+      try {
+        const response = await getGameSteps(firstSelectedGame.name);
+        setGameSteps(response.steps);
+        // Only set default step range if current values are out of bounds
+        // This preserves restored values from "Load Last Run"
+        if (response.steps.length > 0) {
+          const maxStep = response.total_steps;
+          // Only reset startStep if it's out of valid range
+          if (startStep < 1 || startStep > maxStep) {
+            setStartStep(1);
+          }
+          // Only reset endStep if it's out of valid range or less than startStep
+          if (endStep < 1 || endStep > maxStep || endStep < startStep) {
+            setEndStep(maxStep);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch game steps:', error);
+        setGameSteps([]);
+      } finally {
+        setLoadingSteps(false);
+      }
+    };
+
+    fetchSteps();
+  }, [debugMode, firstSelectedGame?.name]);
+
   // Check if resolution is supported by SUT
   const isSutSupported = useCallback((res: Resolution) => {
     if (sutResolutions.length === 0) return true;
@@ -474,6 +580,10 @@ export function QuickLaunchPanel({
         tracingAgents,
         cooldownSeconds,
         timestamp: Date.now(),
+        // Debug mode settings
+        debugMode,
+        startStep: debugMode ? startStep : undefined,
+        endStep: debugMode ? endStep : undefined,
       };
       localStorage.setItem(LAST_RUN_STORAGE_KEY, JSON.stringify(settings));
       setLastRunSettings(settings);
@@ -511,7 +621,9 @@ export function QuickLaunchPanel({
           skipSteamLogin,
           tracingAgents.length === 0, // disableTracing if no agents selected
           cooldownSeconds,
-          tracingAgents.length > 0 ? tracingAgents : undefined
+          tracingAgents.length > 0 ? tracingAgents : undefined,
+          debugMode && startStep ? startStep : undefined,
+          debugMode && endStep ? endStep : undefined
         );
         // Set back to 'ready' so button stays enabled for another run
         setLaunchState('ready');
@@ -552,6 +664,15 @@ export function QuickLaunchPanel({
     setDisableTracing(lastRunSettings.disableTracing ?? false);
     setTracingAgents(lastRunSettings.tracingAgents ?? ['socwatch', 'ptat']);
     setCooldownSeconds(lastRunSettings.cooldownSeconds ?? 120);
+
+    // Restore debug mode settings
+    setDebugMode(lastRunSettings.debugMode ?? false);
+    if (lastRunSettings.debugMode && lastRunSettings.startStep) {
+      setStartStep(lastRunSettings.startStep);
+    }
+    if (lastRunSettings.debugMode && lastRunSettings.endStep) {
+      setEndStep(lastRunSettings.endStep);
+    }
   }, [lastRunSettings, devices, onSelectSut, onSelectGames]);
 
   // Check if last run can be loaded (SUT still exists and at least one game still exists)
@@ -757,6 +878,29 @@ export function QuickLaunchPanel({
             </div>
           </div>
 
+          {/* Debug Mode toggle */}
+          <div className="flex-shrink-0">
+            <div className="text-[10px] text-text-muted uppercase mb-1">Debug</div>
+            <label
+              className={`flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                debugMode
+                  ? 'bg-warning/20 border border-warning/50'
+                  : 'bg-surface-elevated border border-border hover:border-border-hover'
+              }`}
+              title="Debug mode: Run specific automation steps only (skips game launch if start > 1)"
+            >
+              <input
+                type="checkbox"
+                checked={debugMode}
+                onChange={(e) => setDebugMode(e.target.checked)}
+                className="sr-only"
+              />
+              <span className={`text-xs font-medium ${debugMode ? 'text-warning' : 'text-text-secondary'}`}>
+                {debugMode ? 'ON' : 'OFF'}
+              </span>
+            </label>
+          </div>
+
           {/* Load Last Run button */}
           {canLoadLastRun && (
             <div className="flex-shrink-0">
@@ -786,10 +930,56 @@ export function QuickLaunchPanel({
                 }
               `}
             >
-              {isLaunching ? '...' : isCampaign ? 'START CAMPAIGN' : 'START'}
+              {isLaunching ? '...' : debugMode ? `DEBUG ${startStep}-${endStep}` : isCampaign ? 'START CAMPAIGN' : 'START'}
             </button>
           </div>
         </div>
+
+        {/* Row 2: Debug Mode Step Selectors (visible when debug mode is on) */}
+        {debugMode && (
+          <div className="flex items-center gap-4 mt-2 px-2 py-2 bg-warning/5 border border-warning/30 rounded-lg">
+            {loadingSteps ? (
+              <span className="text-xs text-warning animate-pulse">Loading steps...</span>
+            ) : gameSteps.length === 0 ? (
+              <span className="text-xs text-warning">Select a game to see available steps</span>
+            ) : (
+              <>
+                <StepSelector
+                  label="From"
+                  value={startStep}
+                  onChange={(step) => {
+                    setStartStep(step);
+                    // Ensure end step is >= start step
+                    if (endStep < step) {
+                      setEndStep(step);
+                    }
+                  }}
+                  steps={gameSteps}
+                  minStep={1}
+                  maxStep={gameSteps.length}
+                />
+                <StepSelector
+                  label="To"
+                  value={endStep}
+                  onChange={setEndStep}
+                  steps={gameSteps}
+                  minStep={startStep}
+                  maxStep={gameSteps.length}
+                />
+                <div className="flex items-center gap-2 ml-auto text-xs">
+                  <span className="text-text-muted">
+                    Running <span className="text-warning font-bold">{endStep - startStep + 1}</span> of {gameSteps.length} steps
+                  </span>
+                  {startStep > 1 && (
+                    <span className="px-2 py-0.5 bg-warning/20 text-warning rounded text-[10px]">
+                      Skipping game launch
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* ETA Display - below start button */}
         {selectedGames.length > 0 && (
@@ -1184,6 +1374,27 @@ export function QuickLaunchPanel({
             <span className="text-xs text-text-muted">s</span>
           </div>
 
+          {/* Debug Mode toggle */}
+          <label
+            className={`flex items-center gap-2 px-3 py-1.5 rounded cursor-pointer transition-colors ${
+              debugMode
+                ? 'bg-warning/20 border border-warning/50'
+                : 'bg-surface-elevated border border-border hover:border-border-hover'
+            }`}
+            title="Debug mode: Run specific automation steps only (skips game launch if start > 1)"
+          >
+            <input
+              type="checkbox"
+              checked={debugMode}
+              onChange={(e) => setDebugMode(e.target.checked)}
+              className="sr-only"
+            />
+            <span className="text-[10px] text-text-muted uppercase">Debug</span>
+            <span className={`text-xs font-medium ${debugMode ? 'text-warning' : 'text-text-secondary'}`}>
+              {debugMode ? 'ON' : 'OFF'}
+            </span>
+          </label>
+
           {/* Load Last Run Button */}
           {canLoadLastRun && (
             <button
@@ -1217,10 +1428,56 @@ export function QuickLaunchPanel({
                 Starting...
               </span>
             ) : (
-              <>{isCampaign ? `START CAMPAIGN (${selectedGames.length})` : 'START RUN'}</>
+              <>{debugMode ? `DEBUG STEPS ${startStep}-${endStep}` : isCampaign ? `START CAMPAIGN (${selectedGames.length})` : 'START RUN'}</>
             )}
           </button>
         </div>
+
+        {/* Debug Mode Step Selectors (visible when debug mode is on) */}
+        {debugMode && (
+          <div className="flex items-center gap-4 mt-2 px-3 py-2 bg-warning/5 border border-warning/30 rounded-lg">
+            {loadingSteps ? (
+              <span className="text-xs text-warning animate-pulse">Loading steps...</span>
+            ) : gameSteps.length === 0 ? (
+              <span className="text-xs text-warning">Select a game to see available steps</span>
+            ) : (
+              <>
+                <StepSelector
+                  label="From"
+                  value={startStep}
+                  onChange={(step) => {
+                    setStartStep(step);
+                    // Ensure end step is >= start step
+                    if (endStep < step) {
+                      setEndStep(step);
+                    }
+                  }}
+                  steps={gameSteps}
+                  minStep={1}
+                  maxStep={gameSteps.length}
+                />
+                <StepSelector
+                  label="To"
+                  value={endStep}
+                  onChange={setEndStep}
+                  steps={gameSteps}
+                  minStep={startStep}
+                  maxStep={gameSteps.length}
+                />
+                <div className="flex items-center gap-2 ml-auto text-xs">
+                  <span className="text-text-muted">
+                    Running <span className="text-warning font-bold">{endStep - startStep + 1}</span> of {gameSteps.length} steps
+                  </span>
+                  {startStep > 1 && (
+                    <span className="px-2 py-0.5 bg-warning/20 text-warning rounded text-[10px]">
+                      Skipping game launch
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* ETA Display - below start button */}
         {selectedGames.length > 0 && (

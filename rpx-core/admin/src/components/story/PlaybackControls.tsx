@@ -105,15 +105,15 @@ function ProgressBar({
 
   return (
     <div
-      className="flex-1 h-1.5 bg-gray-700 rounded-full cursor-pointer group"
+      className="flex-1 h-2 bg-gray-700 rounded-full cursor-pointer group relative z-10"
       onClick={handleClick}
     >
       <div
         className="h-full bg-primary rounded-full relative transition-all"
         style={{ width: `${percentage}%` }}
       >
-        {/* Thumb */}
-        <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3 h-3 bg-primary rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg" />
+        {/* Thumb - larger hit area and always visible for better interaction */}
+        <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-4 h-4 bg-primary rounded-full shadow-lg ring-2 ring-white/20 z-20" />
       </div>
     </div>
   );

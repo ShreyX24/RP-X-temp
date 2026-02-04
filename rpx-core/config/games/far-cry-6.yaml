@@ -49,6 +49,7 @@ steps:
 
   3:
     description: "Wait for benchmark to complete"
+    no_refocus: true  # Disable periodic refocusing during benchmark (prevents cursor lock)
     action:
       type: "wait"
       duration: 70
@@ -61,7 +62,8 @@ steps:
 
   4:
     description: "Click Exit Benchmark button"
-    focus_before: true  # Re-focus game after benchmark (window loses focus)
+    # NOTE: focus_before disabled - causes cursor lock issues in FC6
+    # focus_before: true
     find:
       type: "any"
       text: "Exit Benchmark"

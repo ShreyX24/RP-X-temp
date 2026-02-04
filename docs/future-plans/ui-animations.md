@@ -149,6 +149,132 @@ npm install framer-motion
 
 ---
 
+## Implemented Animations
+
+### Service Flow Diagram (Story View)
+
+The Service Flow Diagram in the Run Story View uses **React Flow** to visualize real-time service-to-service communication with animated edges.
+
+**Location**: `rpx-core/admin/src/components/story/ServiceFlowDiagram.tsx`
+
+#### How It Works
+
+1. **Service Call Tracking**: The backend tracks HTTP calls via `TimelineManager.service_call_started()` and `service_call_completed()` methods.
+
+2. **Data Flow**:
+   ```
+   Backend (automation_orchestrator.py)
+     ↓ sets timeline on clients
+   OmniparserClient / NetworkManager
+     ↓ calls timeline.service_call_started()
+   TimelineManager
+     ↓ adds SERVICE_CALL_STARTED event
+   WebSocket → Frontend
+     ↓ receives serviceCalls array
+   ServiceFlowDiagram
+     ↓ renders React Flow graph
+   ```
+
+3. **Animated Edges**: React Flow's `animated` property on edges creates the "marching ants" effect:
+   ```tsx
+   edges.push({
+     id: edgeKey,
+     source,
+     target,
+     animated: isActive,  // ← This creates the running arrow animation
+     style: {
+       stroke: isActive ? '#60a5fa' : '#4b5563',
+       strokeWidth: isActive ? 2 : 1,
+     },
+     markerEnd: {
+       type: MarkerType.ArrowClosed,
+       color: isActive ? '#60a5fa' : '#4b5563',
+     },
+   });
+   ```
+
+4. **Active Detection**: An edge is "active" when the current timeline event matches:
+   ```tsx
+   const isActive = currentEvent?.metadata?.source_service === source &&
+                    currentEvent?.metadata?.target_service === target;
+   ```
+
+#### Node Positioning
+
+Nodes are arranged in a star pattern around the central RPX Backend:
+```tsx
+const centerX = 100;
+const centerY = 150;
+const radius = 100;
+
+// Calculate position using angle
+const angle = ((index - 1) / (serviceList.length - 1)) * Math.PI * 1.5 - Math.PI * 0.25;
+const x = centerX + Math.cos(angle) * radius;
+const y = centerY + Math.sin(angle) * radius;
+```
+
+#### Service Colors
+
+| Service | Background | Border | Text |
+|---------|------------|--------|------|
+| RPX Backend | `#1e3a5f` | `#3b82f6` | `#93c5fd` |
+| SUT | `#1e3f1e` | `#22c55e` | `#86efac` |
+| OmniParser | `#3f1e3f` | `#a855f7` | `#d8b4fe` |
+| Queue Service | `#3f3f1e` | `#eab308` | `#fef08a` |
+| Preset Manager | `#1e3f3f` | `#14b8a6` | `#5eead4` |
+
+#### Active State Styling
+
+When a node/edge is active:
+- Node border changes to white (`#fff`)
+- Node gets a glow: `boxShadow: '0 0 12px rgba(255,255,255,0.3)'`
+- Edge stroke becomes blue (`#60a5fa`) and thicker (2px)
+- Edge arrow becomes animated (CSS marching ants)
+
+#### Backend Integration
+
+To track service calls, the automation orchestrator wires the timeline to HTTP clients:
+
+```python
+# In automation_orchestrator.py
+network = NetworkManager(device.ip, device.port)
+if timeline:
+    network.set_timeline(timeline)
+
+vision_model = OmniparserClient(...)
+if timeline:
+    vision_model.set_timeline(timeline)
+```
+
+Each client then tracks calls:
+```python
+# In omniparser_client.py / network.py
+def _track_service_call(self, endpoint: str, method: str = "POST"):
+    if not self._timeline:
+        return None
+    return self._timeline.service_call_started(
+        source_service="rpx_backend",
+        target_service=f"omniparser_{host}",
+        endpoint=endpoint,
+        method=method,
+        linked_event_id=self._linked_event_id,
+    )
+```
+
+#### Required Package
+
+```bash
+npm install @xyflow/react
+```
+
+#### CSS Import
+
+```tsx
+import '@xyflow/react/dist/style.css';
+```
+
+---
+
 ## Notes
 
 - Motion.dev examples are React-focused and work well with our stack

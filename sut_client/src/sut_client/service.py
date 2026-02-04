@@ -36,7 +36,12 @@ from .discovery import DiscoveryThread
 from .ws_client import WebSocketClientThread
 from .input_controller import InputController
 from .launcher import launch_game, cancel_launch, terminate_game, get_game_status, get_current_game_info, find_process_by_name
-from .window import ensure_window_foreground_v2, minimize_other_windows
+from .window import (
+    ensure_window_foreground_v2,
+    minimize_other_windows,
+    focus_window_by_title,
+    focus_window_simple,
+)
 from .system import check_process, kill_process
 from .steam import login_steam, get_steam_library_folders, get_steam_auto_login_user, is_steam_running, verify_steam_login, find_standalone_game
 from .hardware import set_dpi_awareness, get_screen_resolution, get_cpu_model, get_gpu_model
@@ -898,30 +903,62 @@ def create_app() -> Flask:
         """
         Focus a window to ensure it's in foreground.
 
-        Can focus either:
-        1. The current game (default, no params needed)
-        2. Any process by name (e.g., "steam" to focus Steam window)
+        Uses clean focus methods that don't interfere with game cursor locking:
+        1. WScript.Shell AppActivate (cleanest - no system manipulation)
+        2. Basic Win32 ShowWindow + SetForegroundWindow
+        3. No Alt key trick or SystemParametersInfo manipulation
+
+        Can focus by:
+        1. Window title (cleanest, recommended for games)
+        2. Process name (finds PID, then window title)
+        3. Current game (default, no params needed)
 
         Request body (optional):
         {
-            "process_name": "steam",  # Optional: focus this process instead of game
-            "minimize_others": false  # Also minimize other windows
+            "window_title": "Far Cry 6",  # Focus by window title (cleanest)
+            "process_name": "steam",      # Focus by process name
+            "minimize_others": false      # Also minimize other windows
         }
         """
         try:
             data = request.get_json() or {}
+            window_title = data.get('window_title')
             process_name = data.get('process_name')
             minimize_others = data.get('minimize_others', False)
 
             pid = None
             target_name = None
+            method_used = None
 
+            # Method 1: Focus by window title (cleanest, recommended for games)
+            if window_title:
+                logger.info(f"Focusing by window title: '{window_title}'")
+                success = focus_window_by_title(window_title)
+                target_name = window_title
+                method_used = "window_title"
+
+                if success:
+                    return jsonify({
+                        "status": "success",
+                        "message": f"Window focused by title: '{window_title}'",
+                        "window_title": window_title,
+                        "method": method_used
+                    })
+                else:
+                    return jsonify({
+                        "status": "warning",
+                        "message": f"Could not focus window: '{window_title}'",
+                        "window_title": window_title,
+                        "method": method_used
+                    })
+
+            # Method 2: Focus by process name
             if process_name:
-                # Focus specific process by name
                 proc = find_process_by_name(process_name)
                 if proc:
                     pid = proc.pid
                     target_name = process_name
+                    method_used = "process_name"
                     logger.info(f"Found process '{process_name}' with PID {pid}")
                 else:
                     return jsonify({
@@ -929,10 +966,11 @@ def create_app() -> Flask:
                         "message": f"Process '{process_name}' not found"
                     }), 404
             else:
-                # Focus current game (original behavior)
+                # Method 3: Focus current game (default)
                 game_info = get_current_game_info()
                 pid = game_info.get('pid')
-                target_name = "game"
+                target_name = game_info.get('process_name', 'game')
+                method_used = "current_game"
 
                 if not pid:
                     return jsonify({
@@ -940,9 +978,9 @@ def create_app() -> Flask:
                         "message": "No game is currently running"
                     }), 400
 
-            # Focus the window
-            # Skip pywinauto for games - it hangs on fullscreen exclusive mode
-            # Win32 method is faster and more reliable for game windows
+            # Focus the window using clean methods
+            # Uses WScript.Shell AppActivate first, then basic Win32
+            # No Alt key trick or SystemParametersInfo manipulation
             success = ensure_window_foreground_v2(pid, timeout=5, use_pywinauto=False)
 
             # Optionally minimize other windows
@@ -956,6 +994,7 @@ def create_app() -> Flask:
                     "message": f"Window focused (PID: {pid})",
                     "pid": pid,
                     "process_name": target_name,
+                    "method": method_used,
                     "minimized_others": minimized_count
                 })
             else:
@@ -963,7 +1002,8 @@ def create_app() -> Flask:
                     "status": "warning",
                     "message": f"Could not confirm focus for PID {pid}",
                     "pid": pid,
-                    "process_name": target_name
+                    "process_name": target_name,
+                    "method": method_used
                 })
 
         except Exception as e:

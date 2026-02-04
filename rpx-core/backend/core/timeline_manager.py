@@ -753,6 +753,7 @@ class TimelineManager:
             TimelineEventType.STEP_COMPLETED,
             msg,
             status=TimelineEventStatus.COMPLETED,
+            metadata={'step': step_num, 'description': description},
             replaces=f"step_{step_num}",
             group="steps"
         )
@@ -767,7 +768,7 @@ class TimelineManager:
             TimelineEventType.STEP_FAILED,
             msg,
             status=TimelineEventStatus.FAILED,
-            metadata={'error': error},
+            metadata={'step': step_num, 'error': error},
             replaces=f"step_{step_num}",
             group="steps"
         )
@@ -782,6 +783,7 @@ class TimelineManager:
             TimelineEventType.STEP_SKIPPED,
             msg,
             status=TimelineEventStatus.SKIPPED,
+            metadata={'step': step_num, 'reason': reason},
             replaces=f"step_{step_num}",
             group="steps"
         )

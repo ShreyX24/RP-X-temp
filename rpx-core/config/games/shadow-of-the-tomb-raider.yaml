@@ -6,8 +6,10 @@ metadata:
   created_with: Katana Workflow Builder
   created_date: '2025-11-04 03:34:10'
   path: C:\Program Files (x86)\Steam\steamapps\common\Shadow of the Tomb Raider\sottr.exe
-  process_id: sottr
-  process_name: sottr.exe
+  process_id: SOTTR.exe  # Must include .exe for exact match (case-insensitive)
+  process_name: SOTTR.exe
+  # Note: Launcher UI = sottr.exe (lowercase), Actual game = SOTTR.exe (uppercase)
+  # Using SOTTR.exe since that's what the game process appears as in Task Manager
   benchmark_name: Built-in Benchmark
   benchmark_duration: 120
   startup_wait: 60

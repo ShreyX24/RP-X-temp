@@ -17,6 +17,7 @@ import { StoryTimeline } from '../components/story/StoryTimeline';
 import { ScreenshotViewer } from '../components/story/ScreenshotViewer';
 import { ElementComparisonPanel } from '../components/story/ElementComparisonPanel';
 import { PlaybackControls } from '../components/story/PlaybackControls';
+import { MultiServiceLogViewer } from '../components/story/MultiServiceLogViewer';
 
 // Icons
 function ArrowLeftIcon({ className = 'w-4 h-4' }: { className?: string }) {
@@ -76,6 +77,9 @@ export function RunStoryView() {
 
   // Selected event for detail view
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
+
+  // Log viewer state
+  const [showLogViewer, setShowLogViewer] = useState(false);
 
   // Load story data
   useEffect(() => {
@@ -160,14 +164,35 @@ export function RunStoryView() {
     setPlaybackSpeed(speed);
   }, []);
 
+  // Helper to extract step number from event (from metadata or message)
+  const getStepFromEvent = (event: TimelineEvent | null): number | null => {
+    if (!event) return null;
+
+    // Try metadata.step first
+    if (event.metadata?.step != null) {
+      return Number(event.metadata.step);
+    }
+
+    // Fallback: parse from message like "Step 1 done", "Step 2 failed", etc.
+    const match = event.message?.match(/Step\s+(\d+)/i);
+    if (match) {
+      return parseInt(match[1], 10);
+    }
+
+    return null;
+  };
+
+  // Get the step number for the selected event
+  const selectedStep = getStepFromEvent(selectedEvent);
+
   // Get current step's element match
-  const currentElementMatch = selectedEvent
-    ? storyData?.element_matches.find(m => m.step === selectedEvent.metadata?.step)
+  const currentElementMatch = selectedStep != null
+    ? storyData?.element_matches.find(m => m.step == selectedStep)
     : null;
 
   // Get current screenshot info
-  const currentScreenshot = selectedEvent
-    ? storyData?.screenshots.find(s => s.step === selectedEvent.metadata?.step)
+  const currentScreenshot = selectedStep != null
+    ? storyData?.screenshots.find(s => s.step == selectedStep)
     : null;
 
   // Calculate duration
@@ -205,9 +230,9 @@ export function RunStoryView() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="bg-surface border-b border-border px-4 py-3">
+      <header className="flex-shrink-0 bg-surface border-b border-border px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link
@@ -234,11 +259,32 @@ export function RunStoryView() {
               </div>
             </div>
           </div>
-          <div className="text-sm text-text-muted">
-            Run ID: <code className="text-xs bg-surface-elevated px-1.5 py-0.5 rounded">{runId}</code>
+          <div className="flex items-center gap-3">
+            {/* Log viewer button */}
+            <button
+              onClick={() => setShowLogViewer(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-text-muted hover:text-text-primary hover:bg-surface-hover rounded transition-colors"
+              title="View service logs"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Logs
+            </button>
+            <div className="text-sm text-text-muted">
+              Run ID: <code className="text-xs bg-surface-elevated px-1.5 py-0.5 rounded">{runId}</code>
+            </div>
           </div>
         </div>
       </header>
+
+      {/* Multi-service log viewer modal */}
+      <MultiServiceLogViewer
+        runId={runId!}
+        isVisible={showLogViewer}
+        onClose={() => setShowLogViewer(false)}
+      />
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
@@ -282,8 +328,8 @@ export function RunStoryView() {
             />
           </div>
 
-          {/* Element Comparison Panel */}
-          {currentElementMatch && (
+          {/* Element Comparison Panel - always show for step events */}
+          {selectedEvent?.event_type?.startsWith('step_') && (
             <div className="h-48 border-t border-border">
               <ElementComparisonPanel
                 elementMatch={currentElementMatch}
@@ -294,8 +340,8 @@ export function RunStoryView() {
         </div>
       </div>
 
-      {/* Bottom - Playback Controls */}
-      <div className="bg-surface border-t border-border px-4 py-3">
+      {/* Bottom - Playback Controls (sticky at bottom) */}
+      <div className="flex-shrink-0 bg-surface border-t border-border px-4 py-3">
         <PlaybackControls
           isPlaying={isPlaying}
           currentIndex={currentEventIndex}

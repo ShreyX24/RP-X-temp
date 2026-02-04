@@ -13,6 +13,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { ScreenshotInfo, ElementMatch, TimelineEvent, OmniParserElement } from '../../api';
 import { getRunOmniparserJson } from '../../api';
+import { EventDetailsPanel } from './EventDetailsPanel';
 
 interface ScreenshotViewerProps {
   runId: string;
@@ -164,7 +165,10 @@ export function ScreenshotViewer({
   const [imageError, setImageError] = useState(false);
   const [omniparserElements, setOmniparserElements] = useState<OmniParserElement[]>([]);
 
-  // Overlay toggles
+  // Image mode: 'raw' shows original screenshot, 'parsed' shows OmniParser SOM image
+  const [imageMode, setImageMode] = useState<'raw' | 'parsed'>('parsed');
+
+  // Overlay toggles (only relevant in raw mode)
   const [showAllElements, setShowAllElements] = useState(false);
   const [showExpected, setShowExpected] = useState(true);
   const [showMatched, setShowMatched] = useState(true);
@@ -186,6 +190,12 @@ export function ScreenshotViewer({
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
+
+  // Reset image loaded state when screenshot changes
+  useEffect(() => {
+    setImageLoaded(false);
+    setImageError(false);
+  }, [screenshot?.path, screenshot?.parsed_image_path]);
 
   // Load OmniParser JSON when screenshot changes
   useEffect(() => {
@@ -219,11 +229,19 @@ export function ScreenshotViewer({
     setImageError(false);
   };
 
-  // Screenshot URL
-  const screenshotUrl = screenshot?.path || null;
+  // Screenshot URL - use parsed image if available and mode is 'parsed'
+  const hasParsedImage = !!screenshot?.parsed_image_path;
+  const screenshotUrl = imageMode === 'parsed' && hasParsedImage
+    ? screenshot.parsed_image_path
+    : screenshot?.path || null;
 
-  // No screenshot state
+  // No screenshot state - show event details instead
   if (!screenshot || !screenshotUrl) {
+    // If we have an event, show its details instead of "No screenshot"
+    if (event) {
+      return <EventDetailsPanel event={event} />;
+    }
+    // No event selected
     return (
       <div className="h-full flex flex-col items-center justify-center bg-surface-elevated text-text-muted p-4">
         <svg className="w-12 h-12 mb-3 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -240,37 +258,67 @@ export function ScreenshotViewer({
     <div className="h-full flex flex-col">
       {/* Toolbar */}
       <div className="flex items-center justify-between px-3 py-2 bg-surface border-b border-border">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <span className="text-sm text-text-muted">
             {event?.message || `Step ${screenshot.step}`}
           </span>
+
+          {/* Image Mode Toggle - Raw vs Parsed (SOM with bounding boxes) */}
+          {hasParsedImage && (
+            <div className="flex items-center bg-surface-elevated rounded overflow-hidden border border-border">
+              <button
+                onClick={() => setImageMode('parsed')}
+                className={`px-2 py-1 text-xs transition-colors ${
+                  imageMode === 'parsed'
+                    ? 'bg-primary text-white'
+                    : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                Parsed
+              </button>
+              <button
+                onClick={() => setImageMode('raw')}
+                className={`px-2 py-1 text-xs transition-colors ${
+                  imageMode === 'raw'
+                    ? 'bg-primary text-white'
+                    : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                Raw
+              </button>
+            </div>
+          )}
         </div>
-        <div className="flex items-center gap-1">
-          <OverlayToggle
-            label="All Elements"
-            enabled={showAllElements}
-            color="#6366f1"
-            onToggle={() => setShowAllElements(v => !v)}
-          />
-          <OverlayToggle
-            label="Expected"
-            enabled={showExpected}
-            color="#22c55e"
-            onToggle={() => setShowExpected(v => !v)}
-          />
-          <OverlayToggle
-            label="Matched"
-            enabled={showMatched}
-            color="#3b82f6"
-            onToggle={() => setShowMatched(v => !v)}
-          />
-          <OverlayToggle
-            label="Click"
-            enabled={showClick}
-            color="#ef4444"
-            onToggle={() => setShowClick(v => !v)}
-          />
-        </div>
+
+        {/* Overlay controls - only show in raw mode (parsed image already has annotations) */}
+        {imageMode === 'raw' && (
+          <div className="flex items-center gap-1">
+            <OverlayToggle
+              label="All Elements"
+              enabled={showAllElements}
+              color="#6366f1"
+              onToggle={() => setShowAllElements(v => !v)}
+            />
+            <OverlayToggle
+              label="Expected"
+              enabled={showExpected}
+              color="#22c55e"
+              onToggle={() => setShowExpected(v => !v)}
+            />
+            <OverlayToggle
+              label="Matched"
+              enabled={showMatched}
+              color="#3b82f6"
+              onToggle={() => setShowMatched(v => !v)}
+            />
+            <OverlayToggle
+              label="Click"
+              enabled={showClick}
+              color="#ef4444"
+              onToggle={() => setShowClick(v => !v)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Screenshot container */}
@@ -280,6 +328,7 @@ export function ScreenshotViewer({
       >
         {/* Screenshot image */}
         <img
+          key={screenshotUrl}
           src={screenshotUrl}
           alt={`Step ${screenshot.step} screenshot`}
           onLoad={handleImageLoad}
@@ -306,8 +355,8 @@ export function ScreenshotViewer({
           </div>
         )}
 
-        {/* Overlays (only when image is loaded) */}
-        {imageLoaded && (
+        {/* Overlays (only in raw mode when image is loaded - parsed mode already has annotations) */}
+        {imageLoaded && imageMode === 'raw' && (
           <>
             {/* All detected elements from OmniParser */}
             {showAllElements && omniparserElements.map((el, idx) => (

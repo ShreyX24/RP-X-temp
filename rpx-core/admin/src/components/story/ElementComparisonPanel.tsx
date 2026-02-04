@@ -12,7 +12,7 @@ import React from 'react';
 import type { ElementMatch, TimelineEvent } from '../../api';
 
 interface ElementComparisonPanelProps {
-  elementMatch: ElementMatch;
+  elementMatch: ElementMatch | null;
   event: TimelineEvent | null;
 }
 
@@ -56,7 +56,36 @@ function ConfidenceIndicator({ value }: { value: number }) {
   );
 }
 
-export function ElementComparisonPanel({ elementMatch }: ElementComparisonPanelProps) {
+export function ElementComparisonPanel({ elementMatch, event }: ElementComparisonPanelProps) {
+  // If no element match data, show a placeholder
+  if (!elementMatch) {
+    const stepNum = event?.metadata?.step;
+    const description = event?.metadata?.description || event?.message || 'Unknown action';
+
+    return (
+      <div className="h-full flex flex-col bg-surface">
+        <div className="px-4 py-2 border-b border-border">
+          <h3 className="text-sm font-medium text-text-primary">Element Details</h3>
+          <p className="text-xs text-text-muted mt-0.5">
+            {stepNum ? `Step ${stepNum}: ` : ''}{description}
+          </p>
+        </div>
+        <div className="flex-1 flex items-center justify-center text-text-muted p-4">
+          <div className="text-center">
+            <svg className="w-8 h-8 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <p className="text-sm">No element match data</p>
+            <p className="text-xs text-text-tertiary mt-1">
+              This step may not require element detection
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const expected = elementMatch.expected;
   const actual = elementMatch.actual;
 

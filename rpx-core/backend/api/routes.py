@@ -857,6 +857,42 @@ class APIRoutes:
                 logger.error(f"Error validating YAML: {e}")
                 return jsonify({"error": str(e)}), 500
 
+        @app.route('/api/games/<game_name>/steps', methods=['GET'])
+        def get_game_steps(game_name):
+            """Get automation steps for a game (for debug mode step selector)"""
+            try:
+                import yaml as yaml_lib
+
+                if not self.game_manager:
+                    return jsonify({"error": "Game manager not available"}), 500
+
+                yaml_content = self.game_manager.get_game_yaml(game_name)
+                if yaml_content is None:
+                    return jsonify({"error": f"Game '{game_name}' not found"}), 404
+
+                # Parse YAML to extract steps
+                config = yaml_lib.safe_load(yaml_content)
+                steps_dict = config.get('steps', {})
+
+                # Convert to list format with step number and description
+                steps = []
+                for step_num in sorted(steps_dict.keys(), key=lambda x: int(x)):
+                    step_data = steps_dict[step_num]
+                    steps.append({
+                        "step": int(step_num),
+                        "description": step_data.get('description', f'Step {step_num}'),
+                        "action_type": step_data.get('action', {}).get('type', 'unknown'),
+                    })
+
+                return jsonify({
+                    "game_name": game_name,
+                    "total_steps": len(steps),
+                    "steps": steps
+                })
+            except Exception as e:
+                logger.error(f"Error getting steps for {game_name}: {e}")
+                return jsonify({"error": str(e)}), 500
+
         @app.route('/api/games/<game_name>/check-availability', methods=['GET'])
         def check_game_availability(game_name):
             """
@@ -1206,6 +1242,8 @@ class APIRoutes:
                 disable_tracing = data.get('disable_tracing', False)  # If true, disable SOCWatch/PTAT tracing
                 cooldown_seconds = data.get('cooldown_seconds', 120)  # Cooldown between iterations (default 2 min, 0 to disable)
                 tracing_agents = data.get('tracing_agents')  # Specific tracing agents to use (e.g., ['socwatch', 'ptat'])
+                start_step = data.get('start_step')  # Step to start from (1-based, for testing specific steps)
+                end_step = data.get('end_step')  # Step to end at (inclusive, for testing specific steps)
 
                 if not sut_ip or not game_name:
                     return jsonify({"error": "sut_ip and game_name are required"}), 400
@@ -1281,9 +1319,12 @@ class APIRoutes:
                         skip_steam_login=skip_steam_login,
                         disable_tracing=disable_tracing,
                         cooldown_seconds=int(cooldown_seconds),
-                        tracing_agents=tracing_agents
+                        tracing_agents=tracing_agents,
+                        start_step=int(start_step) if start_step else None,
+                        end_step=int(end_step) if end_step else None
                     )
-                    logger.info(f"Successfully queued run {run_id} (quality={quality}, resolution={resolution}, skip_steam={skip_steam_login}, disable_tracing={disable_tracing}, tracing_agents={tracing_agents}, cooldown={cooldown_seconds}s)")
+                    step_range_info = f", steps={start_step}-{end_step}" if start_step or end_step else ""
+                    logger.info(f"Successfully queued run {run_id} (quality={quality}, resolution={resolution}, skip_steam={skip_steam_login}, disable_tracing={disable_tracing}, tracing_agents={tracing_agents}, cooldown={cooldown_seconds}s{step_range_info})")
                     
                     return jsonify({
                         "status": "success",
@@ -1698,13 +1739,17 @@ class APIRoutes:
                         screenshots_dir = iter_dir / 'screenshots'
                         if screenshots_dir.exists():
                             iteration_match = iter_dir.name  # e.g., "perf-run-1"
+                            import re
                             for screenshot_file in sorted(screenshots_dir.glob('screenshot_*.png')):
-                                # Extract step number from filename
-                                step_match = screenshot_file.stem.replace('screenshot_', '')
-                                try:
-                                    step_num = int(step_match)
-                                except ValueError:
-                                    step_num = None
+                                # Extract step number from filename (handles screenshot_1.png, screenshot_1_retry1.png, etc.)
+                                stem = screenshot_file.stem.replace('screenshot_', '')
+                                # Use regex to extract just the leading number
+                                match = re.match(r'^(\d+)', stem)
+                                step_num = int(match.group(1)) if match else None
+
+                                # Skip retry screenshots (only use the final screenshot for each step)
+                                if '_retry' in screenshot_file.name:
+                                    continue
 
                                 screenshot_info = {
                                     'index': step_num,
@@ -1717,6 +1762,11 @@ class APIRoutes:
                                 omniparser_file = screenshots_dir / f"screenshot_{step_num}.json"
                                 if omniparser_file.exists():
                                     screenshot_info['omniparser_path'] = f"/api/runs/{run_id}/omniparser/{iteration_match}/screenshot_{step_num}.json"
+
+                                # Check for parsed/annotated image (SOM image from OmniParser)
+                                parsed_image_file = screenshots_dir / f"omniparser_screenshot_{step_num}.png"
+                                if parsed_image_file.exists():
+                                    screenshot_info['parsed_image_path'] = f"/api/runs/{run_id}/screenshots/omniparser_step_{step_num}.png"
 
                                 screenshots.append(screenshot_info)
 
@@ -1796,8 +1846,13 @@ class APIRoutes:
 
                 # Map URL filename to actual filename
                 # URL: step_1.png -> File: screenshot_1.png
+                # URL: omniparser_step_1.png -> File: omniparser_screenshot_1.png
                 actual_filename = filename
-                if filename.startswith('step_'):
+                if filename.startswith('omniparser_step_'):
+                    # Convert omniparser_step_N.png to omniparser_screenshot_N.png
+                    step_num = filename.replace('omniparser_step_', '').replace('.png', '')
+                    actual_filename = f"omniparser_screenshot_{step_num}.png"
+                elif filename.startswith('step_'):
                     # Convert step_N.png to screenshot_N.png
                     step_num = filename.replace('step_', '').replace('.png', '')
                     actual_filename = f"screenshot_{step_num}.png"
@@ -1805,8 +1860,8 @@ class APIRoutes:
                 # Search in iteration directories for the screenshot
                 screenshot_path = None
 
-                # Check each perf-run-N directory
-                for iter_dir in sorted(run_dir.glob('perf-run-*')):
+                # Check each *-run-* directory (perf-run-N, tracing-run-N, trace-run-N, etc.)
+                for iter_dir in sorted(run_dir.glob('*-run-*')):
                     candidate = iter_dir / 'screenshots' / actual_filename
                     if candidate.exists():
                         screenshot_path = candidate

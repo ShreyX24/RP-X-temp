@@ -476,7 +476,9 @@ class AutomationOrchestrator:
                         skip_resolution_change=run_resolution_changed,
                         disable_tracing=iter_disable_tracing,
                         tracing_agents_override=iter_tracing_agents,
-                        iteration_type=iteration_type
+                        iteration_type=iteration_type,
+                        start_step=run.start_step,  # Step range for testing
+                        end_step=run.end_step,  # Step range for testing
                     )
                     # Store original resolution and state from first iteration
                     if iteration == 0 and iter_res_changed:
@@ -648,7 +650,7 @@ class AutomationOrchestrator:
                 account_pool.release_account_pair(run.sut_ip)
                 logger.info(f"Released Steam account pair for SUT {run.sut_ip}")
 
-    def _execute_single_iteration(self, run: AutomationRun, game_config, device, iteration_num: int, timeline: TimelineManager = None, skip_resolution_change: bool = False, disable_tracing: bool = False, tracing_agents_override: list = None, iteration_type: str = "performance") -> tuple:
+    def _execute_single_iteration(self, run: AutomationRun, game_config, device, iteration_num: int, timeline: TimelineManager = None, skip_resolution_change: bool = False, disable_tracing: bool = False, tracing_agents_override: list = None, iteration_type: str = "performance", start_step: int = None, end_step: int = None) -> tuple:
         """Execute a single automation iteration
 
         Args:
@@ -661,6 +663,8 @@ class AutomationOrchestrator:
             disable_tracing: If True, disable all tracing for this iteration
             tracing_agents_override: List of tracing agents to use (e.g., ["ptat"] or ["socwatch"])
             iteration_type: Type of iteration ("performance", "tracing-ptat", "tracing-socwatch")
+            start_step: Optional step number to start from (1-based). For testing specific steps.
+            end_step: Optional step number to end at (inclusive). For testing specific steps.
 
         Returns:
             tuple: (success: bool, original_resolution: tuple or None, resolution_changed: bool)
@@ -691,6 +695,9 @@ class AutomationOrchestrator:
                 timeline.sut_connecting(device.ip, device.port)
             logger.info(f"Connecting to SUT at {device.ip}:{device.port}")
             network = NetworkManager(device.ip, device.port)
+            # Wire up timeline for service call tracking (Story View)
+            if timeline:
+                network.set_timeline(timeline)
             screenshot_mgr = ScreenshotManager(network)
             if timeline:
                 timeline.sut_connected(device.ip, device.port)
@@ -721,7 +728,9 @@ class AutomationOrchestrator:
                 screen_width=screen_width,
                 screen_height=screen_height
             )
+            # Wire up timeline for service call tracking (Story View)
             if timeline:
+                vision_model.set_timeline(timeline)
                 timeline.omniparser_connected(omniparser_url)
 
             game_launcher = GameLauncher(network)
@@ -917,9 +926,19 @@ class AutomationOrchestrator:
                 disable_tracing=disable_tracing,  # Per-iteration tracing control
                 run_id=run.run_id,
                 tracing_agents_override=tracing_agents_override,  # Per-iteration agent selection
+                start_step=start_step,  # For testing specific step ranges
+                end_step=end_step,  # For testing specific step ranges
             )
             tracing_status = "disabled" if disable_tracing else f"enabled with {tracing_agents_override or 'all agents'}"
             logger.info(f"Iteration {iteration_num} type: {iteration_type}, tracing: {tracing_status}")
+
+            # ===== Debug Mode: Skip Game Launch =====
+            # When start_step > 1, assume game is already running and skip kill/launch
+            skip_game_launch = start_step is not None and start_step > 1
+            if skip_game_launch:
+                logger.info(f"DEBUG MODE: Skipping game kill/launch (start_step={start_step})")
+                if timeline:
+                    timeline.info(f"Debug mode: Skipping game launch (starting from step {start_step})")
 
             # ===== Pre-launch Game Kill + Preset Sync (Parallel) =====
             # Kill any running game and apply preset simultaneously for efficiency
@@ -928,7 +947,7 @@ class AutomationOrchestrator:
             kill_start_time = None
             preset_result = False
 
-            if process_name and network.check_process(process_name):
+            if not skip_game_launch and process_name and network.check_process(process_name):
                 # Game is running - kill it and run preset sync in parallel
                 if timeline:
                     timeline.info(f"Found running {process_name}, terminating...")
@@ -1011,8 +1030,8 @@ class AutomationOrchestrator:
                             timeline.preset_synced(game_config.name)
                         else:
                             timeline.preset_skipped("No preset configured or sync failed")
-            else:
-                # No game running - just apply preset normally
+            elif not skip_game_launch:
+                # No game running - just apply preset normally (only if not debug mode)
                 if timeline:
                     timeline.preset_syncing(game_config.name)
                 preset_result = self._sync_preset_to_sut(game_config, device, run.quality, run.resolution)
@@ -1021,6 +1040,7 @@ class AutomationOrchestrator:
                         timeline.preset_synced(game_config.name)
                     else:
                         timeline.preset_skipped("No preset configured or sync failed")
+            # else: skip_game_launch is True, preset sync already skipped
 
             # ===== Resolution Switching =====
             # Priority: run.resolution > game_config.resolution
@@ -1088,7 +1108,12 @@ class AutomationOrchestrator:
             # Discover game path from SUT or use YAML config as fallback
             game_path = self._discover_game_path(network, game_config)
 
-            if game_path:
+            if skip_game_launch:
+                # Debug mode: Skip game launch, assume game is already running
+                logger.info(f"DEBUG MODE: Skipping game launch, assuming {game_config.name} is already running")
+                if timeline:
+                    timeline.info(f"Debug mode: Skipping game launch, starting automation from step {start_step}")
+            elif game_path:
                 # ===== Game Launch =====
                 # SUT waits up to 60s for game process to appear
                 process_wait_timeout = 60
@@ -1696,66 +1721,137 @@ class AutomationOrchestrator:
                         if timeline:
                             timeline.steam_dialog_detected(dialog_name, handler)
 
-                        # Find and click button (prefer exact matches)
+                        # Get action configuration
                         action = dialog_cfg.get('action', {})
-                        button_text = action.get('button_text', '')
-                        alternatives = action.get('alternatives', [])
-                        all_buttons = [button_text] + alternatives
-
-                        # Two-pass: first exact match, then partial
-                        button_coords = None
-                        for exact_match in [True, False]:
-                            if button_coords:
-                                break
-                            for item in content_list:
-                                if isinstance(item, dict):
-                                    content_str = item.get('content', '').lower().strip()
-                                    bbox = item.get('bbox', [])
-                                    for btn in all_buttons:
-                                        btn_lower = btn.lower().strip()
-                                        if exact_match:
-                                            # Exact match only
-                                            is_match = content_str == btn_lower
-                                        else:
-                                            # Partial match - but content must START with button text
-                                            # Avoids "X CANCEL" matching "cancel"
-                                            is_match = content_str.startswith(btn_lower)
-                                        if is_match and bbox and len(bbox) >= 4:
-                                            x = int((bbox[0] + bbox[2]) / 2 * screen_width)
-                                            y = int((bbox[1] + bbox[3]) / 2 * screen_height)
-                                            button_coords = (x, y)
-                                            logger.debug(f"Found button '{btn}' (exact={exact_match}) at ({x}, {y})")
-                                            break
-                                    if button_coords:
-                                        break
-
-                        # Click the button
+                        action_type = action.get('type', 'click_button')
                         click_success = False
-                        if button_coords:
-                            try:
-                                click_resp = requests.post(
-                                    f"{sut_base_url}/action",
-                                    json={"type": "click", "x": button_coords[0], "y": button_coords[1]},
-                                    timeout=10
-                                )
-                                if click_resp.status_code == 200:
-                                    logger.info(f"Clicked '{button_text}' at {button_coords}")
-                                    click_success = True
-                                time.sleep(0.5)
-                            except Exception as e:
-                                logger.warning(f"Click failed: {e}")
+
+                        # Helper function to find element coordinates by text
+                        def find_element_coords(search_texts, content_list, screen_width, screen_height):
+                            """Find element coordinates by matching text (exact first, then partial)"""
+                            for exact_match in [True, False]:
+                                for item in content_list:
+                                    if isinstance(item, dict):
+                                        content_str = item.get('content', '').lower().strip()
+                                        bbox = item.get('bbox', [])
+                                        for txt in search_texts:
+                                            txt_lower = txt.lower().strip()
+                                            if exact_match:
+                                                is_match = content_str == txt_lower
+                                            else:
+                                                # Partial match - content contains the text
+                                                is_match = txt_lower in content_str
+                                            if is_match and bbox and len(bbox) >= 4:
+                                                x = int((bbox[0] + bbox[2]) / 2 * screen_width)
+                                                y = int((bbox[1] + bbox[3]) / 2 * screen_height)
+                                                return (x, y), txt
+                            return None, None
+
+                        # Handle multi-step actions (e.g., checkbox + button)
+                        if action_type == 'multi_step':
+                            steps = action.get('steps', [])
+                            all_steps_success = True
+
+                            for step_idx, step in enumerate(steps):
+                                step_type = step.get('type', 'click_button')
+                                step_desc = step.get('description', f'Step {step_idx + 1}')
+
+                                # Get search texts for this step
+                                if step_type == 'click_text':
+                                    search_texts = [step.get('text', '')] + step.get('alternatives', [])
+                                else:  # click_button
+                                    search_texts = [step.get('button_text', '')] + step.get('alternatives', [])
+
+                                logger.debug(f"Multi-step {step_idx + 1}/{len(steps)}: {step_desc} - searching for: {search_texts}")
+
+                                # Find and click the element
+                                coords, matched_text = find_element_coords(search_texts, content_list, screen_width, screen_height)
+
+                                if coords:
+                                    try:
+                                        click_resp = requests.post(
+                                            f"{sut_base_url}/action",
+                                            json={"type": "click", "x": coords[0], "y": coords[1]},
+                                            timeout=10
+                                        )
+                                        if click_resp.status_code == 200:
+                                            logger.info(f"Multi-step {step_idx + 1}: Clicked '{matched_text}' at {coords}")
+                                        else:
+                                            logger.warning(f"Multi-step {step_idx + 1}: Click returned status {click_resp.status_code}")
+                                            all_steps_success = False
+                                        # Wait between steps for UI to update
+                                        time.sleep(0.8)
+                                    except Exception as e:
+                                        logger.warning(f"Multi-step {step_idx + 1}: Click failed: {e}")
+                                        all_steps_success = False
+                                else:
+                                    logger.warning(f"Multi-step {step_idx + 1}: Element not found for {search_texts}")
+                                    all_steps_success = False
+
+                            click_success = all_steps_success
+
                         else:
-                            # Try escape as fallback
-                            try:
-                                requests.post(
-                                    f"{sut_base_url}/action",
-                                    json={"type": "key", "key": "escape"},
-                                    timeout=10
-                                )
-                                click_success = True
-                                time.sleep(0.5)
-                            except Exception:
-                                pass
+                            # Standard single click_button action
+                            button_text = action.get('button_text', '')
+                            alternatives = action.get('alternatives', [])
+                            all_buttons = [button_text] + alternatives
+
+                            # Two-pass: first exact match, then partial
+                            button_coords = None
+                            for exact_match in [True, False]:
+                                if button_coords:
+                                    break
+                                for item in content_list:
+                                    if isinstance(item, dict):
+                                        content_str = item.get('content', '').lower().strip()
+                                        bbox = item.get('bbox', [])
+                                        for btn in all_buttons:
+                                            btn_lower = btn.lower().strip()
+                                            if exact_match:
+                                                # Exact match only
+                                                is_match = content_str == btn_lower
+                                            else:
+                                                # Partial match - but content must START with button text
+                                                # Avoids "X CANCEL" matching "cancel"
+                                                is_match = content_str.startswith(btn_lower)
+                                            if is_match and bbox and len(bbox) >= 4:
+                                                x = int((bbox[0] + bbox[2]) / 2 * screen_width)
+                                                y = int((bbox[1] + bbox[3]) / 2 * screen_height)
+                                                button_coords = (x, y)
+                                                logger.debug(f"Found button '{btn}' (exact={exact_match}) at ({x}, {y})")
+                                                break
+                                        if button_coords:
+                                            break
+
+                            # Click the button
+                            if button_coords:
+                                try:
+                                    click_resp = requests.post(
+                                        f"{sut_base_url}/action",
+                                        json={"type": "click", "x": button_coords[0], "y": button_coords[1]},
+                                        timeout=10
+                                    )
+                                    if click_resp.status_code == 200:
+                                        logger.info(f"Clicked '{button_text}' at {button_coords}")
+                                        click_success = True
+                                    time.sleep(0.5)
+                                except Exception as e:
+                                    logger.warning(f"Click failed: {e}")
+                            else:
+                                # Try configured fallback action
+                                fallback_action = action.get('fallback', 'press_escape')
+                                fallback_key = 'enter' if fallback_action == 'press_enter' else 'escape'
+                                logger.info(f"Button not found, using fallback: {fallback_action} (key: {fallback_key})")
+                                try:
+                                    requests.post(
+                                        f"{sut_base_url}/action",
+                                        json={"type": "key", "key": fallback_key},
+                                        timeout=10
+                                    )
+                                    click_success = True
+                                    time.sleep(0.5)
+                                except Exception as e:
+                                    logger.warning(f"Fallback key press failed: {e}")
 
                         # Return based on handler
                         if handler == "try_alternative_account":

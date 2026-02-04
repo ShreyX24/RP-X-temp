@@ -183,6 +183,32 @@ dialogs:
 
     handler: continue
 
+  # Cloud Out of Date - Local save exists but not yet uploaded
+  - id: cloud_out_of_date
+    name: "Cloud Out of Date"
+    description: "Appears when local save exists but hasn't been synced to cloud yet"
+    priority: 6
+
+    detection:
+      keywords:
+        - "cloud out of date"
+        - "not yet in the cloud"
+        - "upload not started"
+        - "create a conflict"
+        - "play anyway"
+      require_all: false
+
+    action:
+      type: click_button
+      button_text: "Play anyway"  # Continue with local save, don't wait for upload
+      alternatives:
+        - "Play Anyway"
+        - "Play"
+      fallback: press_enter
+
+    handler: continue
+    # Continue with game launch - just informational about cloud state
+
   # Generic Steam Error
   - id: steam_error_generic
     name: "Generic Steam Error"
