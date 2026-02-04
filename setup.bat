@@ -1,6 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
 
+:: Usage: setup.bat [--skip-clone | --install-only | -s]
+::   No args    : Interactive menu
+::   --skip-clone, --install-only, -s : Skip git operations, install only
+
 echo ============================================
 echo   RPX - Raptor X Setup Script
 echo ============================================
@@ -11,6 +15,24 @@ set REPO_URL=https://github.com/ShreyX24/RP-X-temp.git
 set REPO_NAME=RPX
 set GDRIVE_FILE_ID=1Otyc6swsZkzNyDHdPvPIXbyCky6QhNkg
 set WEIGHTS_FILE=weights.zip
+
+:: Check for --skip-clone or --install-only flag
+if "%1"=="--skip-clone" goto :install_only
+if "%1"=="--install-only" goto :install_only
+if "%1"=="-s" goto :install_only
+
+:: Interactive menu if no arguments
+echo Select setup mode:
+echo   [1] Full setup (clone/update repos + install)
+echo   [2] Install only (skip git operations)
+echo.
+set /p SETUP_MODE="Enter choice (1 or 2): "
+
+if "%SETUP_MODE%"=="2" goto :install_only
+
+:: ============================================
+:: FULL SETUP MODE
+:: ============================================
 
 :: Check if we're already inside RPX directory
 if exist ".git" (
@@ -51,9 +73,9 @@ git submodule init
 git submodule update --recursive
 
 :: Check if submodules exist, if not clone them
-if not exist "Omniparser server\.git" (
-    echo Cloning Omniparser server...
-    git clone https://github.com/YpS-YpS/OmniLocal.git "Omniparser server"
+if not exist "omniparser-server\.git" (
+    echo Cloning OmniParser server...
+    git clone https://github.com/YpS-YpS/OmniLocal.git "omniparser-server"
 )
 
 if not exist "preset-manager\.git" (
@@ -63,7 +85,7 @@ if not exist "preset-manager\.git" (
 
 echo.
 echo [3/7] Downloading OmniParser weights...
-if exist "Omniparser server\weights\icon_detect\model.pt" (
+if exist "omniparser-server\weights\icon_detect\model.pt" (
     echo [OK] Weights already exist, skipping download
     goto :skip_weights
 )
@@ -71,7 +93,7 @@ if exist "Omniparser server\weights\icon_detect\model.pt" (
 echo Downloading weights from Google Drive (~1.5GB)...
 echo This may take a few minutes...
 
-cd "Omniparser server"
+cd "omniparser-server"
 
 :: Google Drive large file download requires two steps:
 :: 1. First request gets a warning page with UUID
@@ -122,28 +144,54 @@ echo [WARNING] Failed to download weights
 echo Please download manually from:
 echo https://drive.google.com/file/d/%GDRIVE_FILE_ID%/view
 echo.
-echo After downloading, extract weights.zip into "Omniparser server" folder
+echo After downloading, extract weights.zip into "omniparser-server" folder
 cd ..
 
 :skip_weights
+goto :install_dependencies
+
+:: ============================================
+:: INSTALL ONLY MODE (skip git operations)
+:: ============================================
+:install_only
+echo.
+echo ============================================
+echo   Install Only Mode
+echo ============================================
+echo Skipping: git clone, git pull, submodule updates, weights download
+echo.
+
+:: Verify we're in the right directory
+if not exist "rpx-core" (
+    echo [ERROR] Not in RPX directory. Please run from the RPX root folder.
+    echo Expected to find 'rpx-core' folder.
+    pause
+    exit /b 1
+)
+
+:install_dependencies
 
 echo.
-echo [4/7] Installing Gemma Admin dependencies...
-if exist "Gemma\admin\package.json" (
-    cd Gemma\admin
+echo ----------------------------------------
+echo   Installing NPM Dependencies
+echo ----------------------------------------
+echo.
+echo Installing RPX Admin dependencies...
+if exist "rpx-core\admin\package.json" (
+    cd rpx-core\admin
     call npm install
     if errorlevel 1 (
-        echo [WARNING] npm install failed for Gemma admin
+        echo [WARNING] npm install failed for RPX admin
     ) else (
-        echo [OK] Gemma admin dependencies installed
+        echo [OK] RPX admin dependencies installed
     )
     cd ..\..
 ) else (
-    echo [WARNING] Gemma/admin/package.json not found
+    echo [WARNING] rpx-core/admin/package.json not found
 )
 
 echo.
-echo [5/7] Installing Preset Manager Admin dependencies...
+echo Installing Preset Manager Admin dependencies...
 if exist "preset-manager\admin\package.json" (
     cd preset-manager\admin
     call npm install
@@ -158,14 +206,16 @@ if exist "preset-manager\admin\package.json" (
 )
 
 echo.
-echo [6/7] Installing Python services...
+echo ----------------------------------------
+echo   Installing Python Services (pip -e)
+echo ----------------------------------------
 
-echo Installing Gemma Backend...
-pip install -e Gemma\backend
+echo Installing RPX Backend...
+pip install -e rpx-core\backend
 if errorlevel 1 (
-    echo [WARNING] Failed to install Gemma backend
+    echo [WARNING] Failed to install RPX backend
 ) else (
-    echo [OK] Gemma backend installed
+    echo [OK] RPX backend installed
 )
 
 echo Installing SUT Discovery Service...
@@ -190,6 +240,22 @@ if errorlevel 1 (
     echo [WARNING] Failed to install Service Manager
 ) else (
     echo [OK] Service Manager installed
+)
+
+echo Installing SUT Client...
+pip install -e sut_client
+if errorlevel 1 (
+    echo [WARNING] Failed to install SUT Client
+) else (
+    echo [OK] SUT Client installed
+)
+
+echo Installing Preset Manager...
+pip install -e preset-manager
+if errorlevel 1 (
+    echo [WARNING] Failed to install Preset Manager
+) else (
+    echo [OK] Preset Manager installed
 )
 
 echo.
