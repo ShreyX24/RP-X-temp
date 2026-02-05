@@ -1,5 +1,5 @@
-[submodule "Omniparser server"]
-	path = Omniparser server
+[submodule "omniparser-server"]
+	path = omniparser-server
 	url = https://github.com/YpS-YpS/OmniLocal.git
 [submodule "preset-manager"]
 	path = preset-manager

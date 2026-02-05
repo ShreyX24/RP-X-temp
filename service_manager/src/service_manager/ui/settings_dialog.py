@@ -66,7 +66,7 @@ class GeneralTab(QWidget):
 
         omni_path_layout = QHBoxLayout()
         self.omni_dir_edit = QLineEdit()
-        self.omni_dir_edit.setPlaceholderText("e.g., C:/Code/Omniparser server/omnitool/omniparserserver")
+        self.omni_dir_edit.setPlaceholderText("e.g., C:/Code/RPX/omniparser-server/omnitool/omniparserserver")
         omni_path_layout.addWidget(self.omni_dir_edit)
 
         self.omni_browse_btn = QPushButton("Browse...")

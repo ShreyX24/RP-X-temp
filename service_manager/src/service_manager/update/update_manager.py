@@ -64,7 +64,7 @@ class UpdateManager:
             ),
             RepoConfig(
                 name="omniparser",
-                path=self.base_dir / "Omniparser server",
+                path=self.base_dir / "omniparser-server",
                 branch="main"
             ),
         ]

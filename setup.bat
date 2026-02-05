@@ -34,16 +34,15 @@ if "%SETUP_MODE%"=="2" goto :install_only
 :: FULL SETUP MODE
 :: ============================================
 
-:: Check if we're already inside RPX directory
-if exist ".git" (
-    for %%I in (.) do set CURRENT_DIR=%%~nxI
+:: Check if we're already inside RPX directory (validate with rpx-core)
+if exist ".git" if exist "rpx-core" (
     echo Current directory: %CD%
     echo.
     goto :update_existing
 )
 
-:: Check if RPX folder exists in current directory
-if exist "%REPO_NAME%" (
+:: Check if RPX folder exists in current directory (validate with rpx-core)
+if exist "%REPO_NAME%\rpx-core" (
     echo Found existing %REPO_NAME% folder, updating...
     cd "%REPO_NAME%"
     goto :update_existing
@@ -260,7 +259,7 @@ echo   Installing Python Services (pip -e)
 echo ----------------------------------------
 
 echo Installing RPX Backend...
-pip install -e rpx-core\backend
+pip install -e rpx-core
 if errorlevel 1 (
     echo [WARNING] Failed to install RPX backend
 ) else (
