@@ -61,8 +61,57 @@ cd "%REPO_NAME%"
 
 :update_existing
 echo.
-echo [1/7] Pulling latest changes...
-git pull origin master
+echo [1/7] Fetching latest branches...
+git fetch --all --prune
+if errorlevel 1 (
+    echo [WARNING] Failed to fetch, continuing anyway...
+)
+
+echo.
+echo Available branches (sorted by most recent):
+echo ----------------------------------------
+
+:: Build numbered list of remote branches sorted by most recent commit
+set BRANCH_COUNT=0
+for /f "tokens=1,2" %%A in ('git for-each-ref --sort=-committerdate refs/remotes/origin/ --format="%%(refname:short) %%(committerdate:short)"') do (
+    set "RAW_BRANCH=%%A"
+    set "BRANCH_DATE=%%B"
+
+    :: Skip origin/HEAD
+    if /i not "!RAW_BRANCH!"=="origin/HEAD" (
+        :: Strip origin/ prefix
+        set "BRANCH_NAME=!RAW_BRANCH:origin/=!"
+        set /a BRANCH_COUNT+=1
+        set "BRANCH_!BRANCH_COUNT!=!BRANCH_NAME!"
+        if !BRANCH_COUNT! LEQ 9 (
+            echo   [!BRANCH_COUNT!] !BRANCH_NAME! ^(!BRANCH_DATE!^)
+        )
+    )
+)
+
+if !BRANCH_COUNT! GTR 9 (
+    echo.
+    echo   ... and !BRANCH_COUNT! total branches ^(showing top 9^)
+)
+
+echo.
+set /p BRANCH_CHOICE="Select branch number [1]: "
+if "!BRANCH_CHOICE!"=="" set BRANCH_CHOICE=1
+
+:: Validate selection
+set "SELECTED_BRANCH=!BRANCH_%BRANCH_CHOICE%!"
+if "!SELECTED_BRANCH!"=="" (
+    echo [WARNING] Invalid selection, defaulting to branch 1
+    set "SELECTED_BRANCH=!BRANCH_1!"
+)
+
+echo.
+echo Switching to branch: !SELECTED_BRANCH!
+git checkout !SELECTED_BRANCH!
+if errorlevel 1 (
+    echo [WARNING] Failed to checkout !SELECTED_BRANCH!, continuing anyway...
+)
+git pull origin !SELECTED_BRANCH!
 if errorlevel 1 (
     echo [WARNING] Failed to pull, continuing anyway...
 )
