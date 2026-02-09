@@ -12,7 +12,7 @@ import re
 from typing import List, Dict, Any, Tuple
 from dataclasses import dataclass
 
-from modules.gemma_client import BoundingBox  # Reuse the BoundingBox class
+from modules.vision_client import BoundingBox  # Reuse the BoundingBox class
 
 logger = logging.getLogger(__name__)
 

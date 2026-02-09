@@ -1,19 +1,19 @@
-# Gemma E2E Automation - 2025 Roadmap
+# RPX E2E Automation - 2025 Roadmap
 
 > **Created**: 2025-12-28
 > **Status**: Active Development
-> **Goal**: Transform Gemma into a production-ready multi-SUT benchmark automation platform
+> **Goal**: Transform RPX into a production-ready multi-SUT benchmark automation platform
 
 ---
 
 ## Architecture Principles
 
 ### Frontend Communication Rules
-**CRITICAL**: The frontend (Gemma Admin) must NEVER communicate directly with SUTs or other backend services.
+**CRITICAL**: The frontend (RPX Admin) must NEVER communicate directly with SUTs or other backend services.
 
 ```
 ┌─────────────┐      ┌─────────────────┐      ┌─────────────────────────┐
-│   Frontend  │ ──── │  Gemma Backend  │ ──── │  SUT / Discovery /      │
+│   Frontend  │ ──── │  RPX Backend    │ ──── │  SUT / Discovery /      │
 │ (Admin UI)  │      │   (port 5000)   │      │  Queue / Preset Manager │
 └─────────────┘      └─────────────────┘      └─────────────────────────┘
       │                      │
@@ -23,9 +23,9 @@
 ```
 
 **Rules**:
-1. Frontend only knows about ONE backend: Gemma Backend (`/api/*`)
-2. All SUT communication is proxied through Gemma Backend
-3. All service communication (Discovery, Queue, Preset Manager) goes through Gemma Backend
+1. Frontend only knows about ONE backend: RPX Backend (`/api/*`)
+2. All SUT communication is proxied through RPX Backend
+3. All service communication (Discovery, Queue, Preset Manager) goes through RPX Backend
 4. Never expose SUT IPs/ports directly to browser (security + CORS)
 
 **Endpoints for SUT access**:
@@ -186,7 +186,7 @@ def set_resolution(width: int, height: int) -> bool:
 Service Manager UI
     └── Steam Account Pairs config (like OmniParser servers)
         └── STEAM_ACCOUNT_PAIRS env var
-            └── Gemma Backend
+            └── RPX Backend
                 └── AccountPoolManager (singleton)
                     ├── acquire_account_pair(sut_id)
                     ├── release_account_pair(sut_id)

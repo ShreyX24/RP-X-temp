@@ -25,7 +25,7 @@ from datetime import datetime
 from modules.network import NetworkManager
 from modules.screenshot import ScreenshotManager
 from modules.omniparser_client import OmniparserClient
-from modules.gemma_client import GemmaClient, BoundingBox
+from modules.vision_client import VisionClient, BoundingBox
 
 logging.basicConfig(
     level=logging.INFO,
@@ -840,12 +840,12 @@ class WorkflowBuilderGUI:
         # Vision model connections
         self.omniparser_ip = tk.StringVar(value="localhost")
         self.omniparser_port = tk.StringVar(value="8000")
-        self.gemma_ip = tk.StringVar(value="localhost")
-        self.gemma_port = tk.StringVar(value="1234")
+        self.lmstudio_ip = tk.StringVar(value="localhost")
+        self.lmstudio_port = tk.StringVar(value="1234")
 
         # Store connection states for each model
         self.omniparser_connection = None
-        self.gemma_connection = None
+        self.lmstudio_connection = None
 
         # Metadata variables
         self.game_name = tk.StringVar(value="My Game")
@@ -931,7 +931,7 @@ class WorkflowBuilderGUI:
         self.vision_var = tk.StringVar(value="omniparser")
         ttk.Radiobutton(vision_frame, text="Omni", variable=self.vision_var,
                        value="omniparser", command=self.on_vision_model_change).pack(side=tk.LEFT)
-        ttk.Radiobutton(vision_frame, text="Gemma", variable=self.vision_var,
+        ttk.Radiobutton(vision_frame, text="LM Studio", variable=self.vision_var,
                        value="gemma", command=self.on_vision_model_change).pack(side=tk.LEFT, padx=(0,5))
 
         # Omniparser connection entry
@@ -944,14 +944,14 @@ class WorkflowBuilderGUI:
         self.vision_status_label = ttk.Label(self.omni_frame, text="*", foreground="red", font=('TkDefaultFont', 14))
         self.vision_status_label.pack(side=tk.LEFT, padx=2)
 
-        # Gemma connection (hidden by default)
-        self.gemma_frame = ttk.Frame(vision_frame)
-        ttk.Entry(self.gemma_frame, textvariable=self.gemma_ip, width=12).pack(side=tk.LEFT, padx=2)
-        ttk.Label(self.gemma_frame, text=":").pack(side=tk.LEFT)
-        ttk.Entry(self.gemma_frame, textvariable=self.gemma_port, width=5).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.gemma_frame, text="Connect", command=self.connect_vision_model, width=8).pack(side=tk.LEFT, padx=3)
-        self.gemma_status_label = ttk.Label(self.gemma_frame, text="*", foreground="red", font=('TkDefaultFont', 14))
-        self.gemma_status_label.pack(side=tk.LEFT, padx=2)
+        # LM Studio connection (hidden by default)
+        self.lmstudio_frame = ttk.Frame(vision_frame)
+        ttk.Entry(self.lmstudio_frame, textvariable=self.lmstudio_ip, width=12).pack(side=tk.LEFT, padx=2)
+        ttk.Label(self.lmstudio_frame, text=":").pack(side=tk.LEFT)
+        ttk.Entry(self.lmstudio_frame, textvariable=self.lmstudio_port, width=5).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.lmstudio_frame, text="Connect", command=self.connect_vision_model, width=8).pack(side=tk.LEFT, padx=3)
+        self.lmstudio_status_label = ttk.Label(self.lmstudio_frame, text="*", foreground="red", font=('TkDefaultFont', 14))
+        self.lmstudio_status_label.pack(side=tk.LEFT, padx=2)
 
         # Action buttons (compact)
         btn_frame = ttk.Frame(control_frame)
@@ -1152,7 +1152,7 @@ class WorkflowBuilderGUI:
     def on_vision_model_change(self):
         """Handle vision model selection change - preserves connection state."""
         if self.vision_var.get() == "omniparser":
-            self.gemma_frame.pack_forget()
+            self.lmstudio_frame.pack_forget()
             self.omni_frame.pack(fill=tk.X, pady=2)
 
             if self.omniparser_connection:
@@ -1163,14 +1163,14 @@ class WorkflowBuilderGUI:
                 self.vision_status_label.config(text="*", foreground="red")
         else:
             self.omni_frame.pack_forget()
-            self.gemma_frame.pack(fill=tk.X, pady=2)
+            self.lmstudio_frame.pack(fill=tk.X, pady=2)
 
-            if self.gemma_connection:
-                self.vision_model = self.gemma_connection
-                self.gemma_status_label.config(text="*", foreground="green")
+            if self.lmstudio_connection:
+                self.vision_model = self.lmstudio_connection
+                self.lmstudio_status_label.config(text="*", foreground="green")
             else:
                 self.vision_model = None
-                self.gemma_status_label.config(text="*", foreground="red")
+                self.lmstudio_status_label.config(text="*", foreground="red")
 
     def cycle_zoom(self):
         """Cycle through zoom levels: 50% -> 60% -> 70% -> 80% -> 90% -> 100% -> 50%..."""
@@ -1435,14 +1435,14 @@ class WorkflowBuilderGUI:
                 model_name = "Omniparser"
                 status_label = self.vision_status_label
             else:
-                ip = self.gemma_ip.get()
-                port = self.gemma_port.get()
+                ip = self.lmstudio_ip.get()
+                port = self.lmstudio_port.get()
                 url = f"http://{ip}:{port}"
-                self.vision_model = GemmaClient(url)
+                self.vision_model = VisionClient(url)
                 # Save connection for this model
-                self.gemma_connection = self.vision_model
-                model_name = "Gemma"
-                status_label = self.gemma_status_label
+                self.lmstudio_connection = self.vision_model
+                model_name = "LM Studio"
+                status_label = self.lmstudio_status_label
 
             status_label.config(text="*", foreground="green")
             self.status_text.set(f"Connected to {model_name} at {url}")
@@ -1454,9 +1454,9 @@ class WorkflowBuilderGUI:
                 # Clear saved connection on failure
                 self.omniparser_connection = None
             else:
-                self.gemma_status_label.config(text="*", foreground="red")
+                self.lmstudio_status_label.config(text="*", foreground="red")
                 # Clear saved connection on failure
-                self.gemma_connection = None
+                self.lmstudio_connection = None
             messagebox.showerror("Error", f"Failed to connect to vision model: {str(e)}")
 
     def capture_screenshot(self):

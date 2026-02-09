@@ -99,8 +99,8 @@ class AccountScheduler:
         self.on_account_waiting: Optional[callable] = None
 
         # Persistence file path - compute from module location
-        # __file__ is Gemma/backend/core/account_scheduler.py
-        # We need Gemma/logs/runs/account_locks.json
+        # __file__ is rpx-core/backend/core/account_scheduler.py
+        # We need rpx-core/logs/runs/account_locks.json
         self._locks_file = Path(__file__).parent.parent.parent / 'logs' / 'runs' / 'account_locks.json'
 
         # Clear any stale locks from previous session

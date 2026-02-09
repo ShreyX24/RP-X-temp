@@ -1,10 +1,10 @@
-# Gemma + Preset-Manager Integration Plan (Final)
+# RPX + Preset-Manager Integration Plan (Final)
 
 ## Architecture Overview
 
-**Branch:** `pre-prod/v6-pm-gemma-merger`
+**Branch:** `pre-prod/v6-pm-rpx-merger`
 
-The **SUT Discovery Service** is the **SINGLE GATEWAY** for all SUT communication. Neither Preset-Manager nor Gemma talk directly to SUTs.
+The **SUT Discovery Service** is the **SINGLE GATEWAY** for all SUT communication. Neither Preset-Manager nor RPX talk directly to SUTs.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -25,7 +25,7 @@ The **SUT Discovery Service** is the **SINGLE GATEWAY** for all SUT communicatio
         ▲                           ▲                           ▲
         │                           │                           │
 ┌───────┴───────┐           ┌───────┴───────┐           ┌───────┴───────┐
-│  GEMMA GUI    │           │ PRESET-MANAGER │           │  SUT CLIENT   │
+│  RPX GUI      │           │ PRESET-MANAGER │           │  SUT CLIENT   │
 │               │           │  (Port 5000)   │           │  (Port 8080)  │
 │ NO internal   │           │ NO internal    │           │               │
 │ discovery     │           │ discovery      │           │ Registers     │
@@ -48,9 +48,9 @@ The **SUT Discovery Service** is the **SINGLE GATEWAY** for all SUT communicatio
 | `/installed_games` endpoint | `sut_client/service.py` | ❌ Add endpoint |
 | **Remove PM internal discovery** | `preset_manager/server.py` | ❌ Disable scanner/announcer |
 | **PM Discovery Client** | `preset_manager/discovery_client.py` | ❌ NEW - calls Discovery Service |
-| **Gemma Discovery Client** | `Gemma/modules/discovery_client.py` | ❌ NEW |
-| **Gemma Preset Client** | `Gemma/modules/preset_manager_client.py` | ❌ NEW |
-| Gemma GUI Integration | `Gemma/gui_app_multi_sut.py` | ❌ Modify - remove mysuts.json |
+| **RPX Discovery Client** | `Gemma/modules/discovery_client.py` | ❌ NEW |
+| **RPX Preset Client** | `Gemma/modules/preset_manager_client.py` | ❌ NEW |
+| RPX GUI Integration | `Gemma/gui_app_multi_sut.py` | ❌ Modify - remove mysuts.json |
 | Integration Config | `Gemma/config/integration_config.json` | ❌ NEW |
 
 ---
@@ -131,7 +131,7 @@ sut_discovery_service/
 ```python
 """
 Proxy all SUT communication through Discovery Service.
-Neither Gemma nor Preset-Manager talk directly to SUTs.
+Neither RPX nor Preset-Manager talk directly to SUTs.
 """
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -387,7 +387,7 @@ async def sync_to_sut_via_discovery(discovery_client, unique_id, preset_data):
 
 ---
 
-## Phase 4: Add Clients to Gemma
+## Phase 4: Add Clients to RPX
 
 ### 4.1 Create discovery_client.py
 
@@ -396,7 +396,7 @@ async def sync_to_sut_via_discovery(discovery_client, unique_id, preset_data):
 ```python
 """
 Client for SUT Discovery Service.
-Gemma uses this for ALL SUT communication - no direct SUT access.
+RPX uses this for ALL SUT communication - no direct SUT access.
 """
 
 import requests
@@ -570,7 +570,7 @@ class DiscoveryClient:
 ```python
 """
 Client for Preset-Manager API.
-Used by Gemma to apply PPG presets before automation.
+Used by RPX to apply PPG presets before automation.
 """
 
 import requests
@@ -650,7 +650,7 @@ class PresetManagerClient:
 
 ---
 
-## Phase 5: Update Gemma GUI
+## Phase 5: Update RPX GUI
 
 ### 5.1 Modify gui_app_multi_sut.py
 
@@ -710,7 +710,7 @@ def send_action(self, action):
 
 ---
 
-## Phase 5: Gemma Admin Frontend (React/TypeScript/Tailwind 4.0)
+## Phase 5: RPX Admin Frontend (React/TypeScript/Tailwind 4.0)
 
 Replace tkinter `gui_app_multi_sut.py` with modern React frontend like preset-manager/admin.
 
@@ -795,8 +795,8 @@ Create `Gemma/__init__.py` with `--host` flag to launch frontend.
 | 1 | Phase 1 | SUT Discovery Service with full proxy | ~12 files |
 | 2 | Phase 2 | SUT client `/installed_games` | ~40 lines |
 | 3 | Phase 3 | Remove PM internal discovery, add client | ~2 files |
-| 4 | Phase 4 | Gemma Python clients | 2 new files |
-| 5 | Phase 5 | Gemma React frontend | ~15 files |
+| 4 | Phase 4 | RPX Python clients | 2 new files |
+| 5 | Phase 5 | RPX React frontend | ~15 files |
 | 6 | Phase 6 | Configuration | 1 file |
 
 ---
@@ -819,20 +819,20 @@ STARTUP:
 1. SUT Discovery Service starts on port 5001
 2. SUT Clients register via WebSocket to Discovery Service
 3. Preset-Manager starts on port 5000 (no internal discovery)
-4. Gemma GUI starts, connects to Discovery Service
+4. RPX GUI starts, connects to Discovery Service
 
 AUTOMATION:
-1. Gemma GUI → Discovery Service: GET /api/suts
+1. RPX GUI → Discovery Service: GET /api/suts
 2. User selects SUTs, games, preset (1080p high)
 3. User clicks "Start"
-4. Gemma → Preset-Manager: POST /api/sync/gemma-presets
+4. RPX → Preset-Manager: POST /api/sync/gemma-presets
 5. Preset-Manager → Discovery Service: GET /api/suts/{id}/games
 6. Preset-Manager → Discovery Service: POST /api/suts/{id}/apply-preset
 7. Discovery Service → SUT Client: POST /apply-preset
-8. Results flow back: SUT → Discovery → PM → Gemma
-9. Gemma → Discovery Service: POST /api/suts/{id}/launch
-10. Gemma → Discovery Service: POST /api/suts/{id}/action (automation)
-11. Gemma → Discovery Service: GET /api/suts/{id}/screenshot
+8. Results flow back: SUT → Discovery → PM → RPX
+9. RPX → Discovery Service: POST /api/suts/{id}/launch
+10. RPX → Discovery Service: POST /api/suts/{id}/action (automation)
+11. RPX → Discovery Service: GET /api/suts/{id}/screenshot
 ```
 
 ---
@@ -846,7 +846,7 @@ AUTOMATION:
 - [ ] Discovery Service proxies `/action`, `/screenshot`, `/launch` correctly
 - [ ] Preset-Manager starts without internal discovery
 - [ ] Preset-Manager uses Discovery Client for all SUT access
-- [ ] Gemma GUI shows SUTs from Discovery Service
-- [ ] Gemma GUI has no mysuts.json dependency
+- [ ] RPX GUI shows SUTs from Discovery Service
+- [ ] RPX GUI has no mysuts.json dependency
 - [ ] Preset application works end-to-end
 - [ ] Automation runs using only Discovery Service for SUT communication

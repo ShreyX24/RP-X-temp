@@ -11,7 +11,7 @@ import yaml
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 
-from modules.gemma_client import BoundingBox
+from modules.vision_client import BoundingBox
 from modules.tracing_config import get_tracing_config, get_tracing_agents_dict
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class SimpleAutomation:
             config_path: Path to YAML configuration file
             network: NetworkManager instance for SUT communication
             screenshot_mgr: ScreenshotManager instance
-            vision_model: Vision model client (Omniparser/Gemma/Qwen)
+            vision_model: Vision model client (Omniparser/Qwen)
             stop_event: Threading event for stopping automation
             run_dir: Directory to save logs and screenshots
             annotator: Annotator instance for drawing bounding boxes
@@ -1792,7 +1792,7 @@ class SimpleAutomation:
 # import yaml
 # from typing import List, Dict, Any, Optional
 
-# from modules.gemma_client import BoundingBox
+# from modules.vision_client import BoundingBox
 
 # logger = logging.getLogger(__name__)
 

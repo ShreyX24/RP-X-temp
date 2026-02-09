@@ -35,7 +35,7 @@ class BackendConfig:
     instant_paired_discovery: bool = True      # Connect to paired SUTs immediately on startup
     paired_devices_file: str = "paired_devices.json"  # Storage for paired devices
 
-    # SUT identification (supports both old gemma_sut_* and new rpx_sut_*)
+    # SUT identification (supports both old legacy and new rpx_sut_*)
     sut_identifier_key: str = "rpx_sut_signature"
     sut_identifier_value: str = "rpx_sut_v1"
     legacy_sut_identifier_key: str = "gemma_sut_signature"  # For backward compatibility

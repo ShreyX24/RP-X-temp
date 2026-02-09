@@ -1267,7 +1267,7 @@ class AutomationOrchestrator:
                         pass  # Continue with automation - process was found after dialog handling
                     # Check if it's a 404 error (SUT service issue)
                     elif "404" in error_str or "NOT FOUND" in error_str:
-                        error_msg = f"SUT service error: /launch endpoint not found on {device.ip}:{device.port}. Please ensure gemma_sut_service.py is running on the SUT."
+                        error_msg = f"SUT service error: /launch endpoint not found on {device.ip}:{device.port}. Please ensure sut_client service is running on the SUT."
                         if timeline:
                             timeline.error(f"Game launch failed: {error_msg}")
                         raise RuntimeError(error_msg)

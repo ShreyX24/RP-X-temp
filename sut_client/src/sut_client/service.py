@@ -3,7 +3,7 @@ SUT Client Flask Service
 HTTP API for receiving preset commands from Master
 Supports fast discovery via UDP broadcast and WebSocket connection
 
-Merged with KATANA Gemma v0.2 game launch and input automation features
+Merged with KATANA RPX v0.2 game launch and input automation features
 """
 
 import logging
@@ -66,7 +66,7 @@ def create_app() -> Flask:
     backup_service = BackupService(settings.backup_dir)
     preset_applier = PresetApplier(backup_service)
 
-    # Initialize input controller (from Gemma v0.2)
+    # Initialize input controller (from RPX v0.2)
     input_controller = InputController()
 
     # =========================================================================
@@ -436,7 +436,7 @@ def create_app() -> Flask:
     def screen_info():
         """
         Get screen resolution information.
-        Required by Gemma automation NetworkManager.
+        Required by RPX automation NetworkManager.
         """
         screen_width, screen_height = get_screen_resolution()
         return jsonify({
@@ -818,7 +818,7 @@ def create_app() -> Flask:
             return jsonify({"success": False, "error": str(e)}), 500
 
     # =========================================================================
-    # GAME LAUNCH ENDPOINTS (from KATANA Gemma v0.2)
+    # GAME LAUNCH ENDPOINTS (from KATANA RPX v0.2)
     # =========================================================================
 
     @app.route('/launch', methods=['POST'])
@@ -830,7 +830,7 @@ def create_app() -> Flask:
         {
             "steam_app_id": "1234567",  # Optional: Steam App ID
             "exe_path": "C:/path/to/game.exe",  # Optional: Direct exe path
-            "path": "C:/path/to/game.exe",  # Optional: Legacy Gemma NetworkManager format
+            "path": "C:/path/to/game.exe",  # Optional: Legacy RPX NetworkManager format
             "process_name": "game.exe",  # Optional: Process to detect
             "force_relaunch": false,  # Optional: Kill existing and relaunch
             "launch_args": "-benchmark test.xml",  # Optional: Command-line args for game
@@ -842,9 +842,9 @@ def create_app() -> Flask:
 
             steam_app_id = data.get('steam_app_id')
             exe_path = data.get('exe_path')
-            # Support legacy 'path' parameter from Gemma NetworkManager
+            # Support legacy 'path' parameter from RPX NetworkManager
             legacy_path = data.get('path')
-            # Support both 'process_name' and 'process_id' (Gemma sends process_id)
+            # Support both 'process_name' and 'process_id' (RPX sends process_id)
             process_name = data.get('process_name') or data.get('process_id')
             force_relaunch = data.get('force_relaunch', False)
             startup_wait = data.get('startup_wait', 30)  # Post-launch initialization wait
@@ -1044,7 +1044,7 @@ def create_app() -> Flask:
             return jsonify({"status": "error", "message": str(e)}), 500
 
     # =========================================================================
-    # INPUT AUTOMATION ENDPOINTS (from KATANA Gemma v0.2)
+    # INPUT AUTOMATION ENDPOINTS (from KATANA RPX v0.2)
     # =========================================================================
 
     @app.route('/action', methods=['POST'])
@@ -1073,7 +1073,7 @@ def create_app() -> Flask:
             if not data:
                 return jsonify({"status": "error", "message": "No data provided"}), 400
 
-            # Accept both 'action' (preset-manager style) and 'type' (Gemma style)
+            # Accept both 'action' (preset-manager style) and 'type' (RPX style)
             action_type = data.get('action') or data.get('type')
             if not action_type:
                 return jsonify({"status": "error", "message": "Missing 'action' or 'type' field"}), 400
@@ -1315,7 +1315,7 @@ def create_app() -> Flask:
             return jsonify({"status": "error", "message": str(e)}), 500
 
     # =========================================================================
-    # PROCESS CONTROL ENDPOINTS (from KATANA Gemma v0.2)
+    # PROCESS CONTROL ENDPOINTS (from KATANA RPX v0.2)
     # =========================================================================
 
     @app.route('/check_process', methods=['POST'])
@@ -1600,7 +1600,7 @@ def create_app() -> Flask:
             return jsonify({"status": "error", "message": str(e)}), 500
 
     # =========================================================================
-    # STEAM ENDPOINTS (from KATANA Gemma v0.2)
+    # STEAM ENDPOINTS (from KATANA RPX v0.2)
     # =========================================================================
 
     @app.route('/steam/current', methods=['GET'])

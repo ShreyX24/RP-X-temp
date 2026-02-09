@@ -7,7 +7,7 @@ import logging
 import time
 from typing import List, Dict, Any, Tuple, Optional, Set
 
-from modules.gemma_client import BoundingBox
+from modules.vision_client import BoundingBox
 
 logger = logging.getLogger(__name__)
 

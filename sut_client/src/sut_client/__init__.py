@@ -11,8 +11,18 @@ import logging
 __version__ = "0.3.0"
 __author__ = "RPX Team"
 
-# RAPTOR X ASCII Banner (with purple-to-white gradient)
+# RAPTOR X Block Banner (with purple-to-white gradient)
 RPX_BANNER_LINES = [
+    "\u2588\u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557     \u2588\u2588\u2557  \u2588\u2588\u2557",
+    "\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u255a\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255d\u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557    \u255a\u2588\u2588\u2557\u2588\u2588\u2554\u255d",
+    "\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d   \u2588\u2588\u2551   \u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d     \u255a\u2588\u2588\u2588\u2554\u255d",
+    "\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2550\u255d    \u2588\u2588\u2551   \u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557     \u2588\u2588\u2554\u2588\u2588\u2557",
+    "\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2551        \u2588\u2588\u2551   \u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2551  \u2588\u2588\u2551    \u2588\u2588\u2554\u255d \u2588\u2588\u2557",
+    "\u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u255d        \u255a\u2550\u255d    \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u255d  \u255a\u2550\u255d    \u255a\u2550\u255d  \u255a\u2550\u255d",
+]
+
+# Fallback ASCII banner for terminals that don't support Unicode
+RPX_BANNER_ASCII = [
     " ____   _    ____ _____ ___  ____    __  __",
     "|  _ \\ / \\  |  _ \\_   _/ _ \\|  _ \\   \\ \\/ /",
     "| |_) / _ \\ | |_) || || | | | |_) |   \\  / ",
@@ -45,18 +55,34 @@ def _enable_windows_ansi():
 
 
 def print_banner(version: str):
-    """Print the RAPTOR X banner with purple-to-white gradient"""
+    """Print the RAPTOR X banner with purple-to-white gradient.
+
+    Uses block-character banner by default, falls back to plain ASCII
+    if the terminal encoding doesn't support Unicode.
+    """
     # Enable ANSI colors on Windows
     _enable_windows_ansi()
 
+    # Choose banner: try Unicode block chars, fall back to ASCII
+    banner = RPX_BANNER_LINES
+    try:
+        # Test if stdout can encode the block characters
+        RPX_BANNER_LINES[0].encode(sys.stdout.encoding or "utf-8")
+    except (UnicodeEncodeError, LookupError):
+        banner = RPX_BANNER_ASCII
+
     print()  # Empty line before banner
-    for i, line in enumerate(RPX_BANNER_LINES):
+    for i, line in enumerate(banner):
         color_code = GRADIENT_COLORS[i] if i < len(GRADIENT_COLORS) else 231
-        print(f"\033[38;5;{color_code}m{line}{RESET}")
+        try:
+            print(f"\033[38;5;{color_code}m{line}{RESET}")
+        except UnicodeEncodeError:
+            # Final safety net: strip to ASCII
+            print(f"\033[38;5;{color_code}m{line.encode('ascii', 'replace').decode()}{RESET}")
     print()
     # Version line in white
     version_text = f"SUT Client v{version}"
-    padding = (len(RPX_BANNER_LINES[0]) - len(version_text)) // 2
+    padding = max(0, (len(banner[0]) - len(version_text)) // 2)
     print(f"\033[97m{' ' * padding}{version_text}{RESET}")
     print()
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Client for external SUT Discovery Service.
-Used when Gemma is configured to use standalone Discovery Service.
+Used when RPX is configured to use standalone Discovery Service.
 """
 
 import logging
@@ -16,7 +16,7 @@ class DiscoveryServiceClient:
     """
     Client to communicate with standalone SUT Discovery Service.
 
-    When use_external_discovery is True, Gemma uses this client
+    When use_external_discovery is True, RPX uses this client
     instead of internal discovery for all SUT communication.
     """
 
@@ -151,7 +151,7 @@ class DiscoveryServiceClient:
             logger.error(f"Failed to apply preset to SUT {unique_id}: {e}")
             return {"success": False, "error": str(e)}
 
-    async def pair_device(self, unique_id: str, paired_by: str = "gemma") -> bool:
+    async def pair_device(self, unique_id: str, paired_by: str = "rpx") -> bool:
         """Pair a device via Discovery Service."""
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:

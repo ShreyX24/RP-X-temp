@@ -1,4 +1,4 @@
-# UI Animation Plan - Gemma Admin
+# UI Animation Plan - RPX Admin
 
 > **Status**: Future Enhancement
 > **Created**: 2025-12-28
@@ -8,7 +8,7 @@
 
 ## Overview
 
-Transform Gemma Admin into a polished, animated experience using Motion (formerly Framer Motion) and Fancy Components. This document catalogs animation patterns and their intended use cases.
+Transform RPX Admin into a polished, animated experience using Motion (formerly Framer Motion) and Fancy Components. This document catalogs animation patterns and their intended use cases.
 
 ---
 

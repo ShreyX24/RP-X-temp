@@ -39,7 +39,7 @@ class SUTClient:
         # Set reasonable defaults
         self.session.headers.update({
             'Content-Type': 'application/json',
-            'User-Agent': 'Gemma-Backend-Client/2.0'
+            'User-Agent': 'RPX-Backend-Client/2.0'
         })
 
         logger.debug("SUT client initialized")

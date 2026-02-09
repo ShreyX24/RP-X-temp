@@ -262,13 +262,13 @@ class AutomationGUI:
         ttk.Label(url_row, text="LM Studio URL:").pack(side=tk.LEFT, padx=(0, 5))
         ttk.Entry(url_row, textvariable=self.lm_studio_url, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        # Model Selection (Gemma and Qwen VL)
+        # Model Selection (LM Studio and Qwen VL)
         model_row = ttk.Frame(vision_group)
         model_row.pack(fill=tk.X)
         ttk.Label(model_row, text="Select Model:").pack(side=tk.LEFT, padx=(0, 10))
-        
-        # Radio buttons for Gemma and Qwen VL
-        ttk.Radiobutton(model_row, text="Gemma", variable=self.vision_model, 
+
+        # Radio buttons for LM Studio and Qwen VL
+        ttk.Radiobutton(model_row, text="LM Studio", variable=self.vision_model,
                     value="gemma", command=self.update_vision_model_ui).pack(side=tk.LEFT, padx=(0, 15))
         ttk.Radiobutton(model_row, text="Qwen VL", variable=self.vision_model, 
                     value="qwen", command=self.update_vision_model_ui).pack(side=tk.LEFT)
@@ -820,7 +820,7 @@ class AutomationGUI:
             # Import required modules
             from modules.network import NetworkManager
             from modules.screenshot import ScreenshotManager
-            from modules.gemma_client import GemmaClient
+            from modules.vision_client import VisionClient
             from modules.qwen_client import QwenClient
             from modules.omniparser_client import OmniparserClient
             from modules.annotator import Annotator
@@ -864,8 +864,8 @@ class AutomationGUI:
             
             # Initialize the vision model based on user selection
             if self.vision_model.get() == 'gemma':
-                self.logger.info("Using Gemma for UI detection")
-                vision_model = GemmaClient(self.lm_studio_url.get())
+                self.logger.info("Using LM Studio vision model for UI detection")
+                vision_model = VisionClient(self.lm_studio_url.get())
             elif self.vision_model.get() == 'qwen':
                 self.logger.info("Using Qwen VL for UI detection")
                 vision_model = QwenClient(self.lm_studio_url.get())
@@ -953,7 +953,7 @@ class AutomationGUI:
             # Import required modules
             from modules.network import NetworkManager
             from modules.screenshot import ScreenshotManager
-            from modules.gemma_client import GemmaClient
+            from modules.vision_client import VisionClient
             from modules.qwen_client import QwenClient
             from modules.omniparser_client import OmniparserClient
             from modules.annotator import Annotator
@@ -997,8 +997,8 @@ class AutomationGUI:
             
             # Initialize the vision model based on user selection
             if self.vision_model.get() == 'gemma':
-                self.logger.info("Using Gemma for UI detection")
-                vision_model = GemmaClient(self.lm_studio_url.get())
+                self.logger.info("Using LM Studio vision model for UI detection")
+                vision_model = VisionClient(self.lm_studio_url.get())
             elif self.vision_model.get() == 'qwen':
                 self.logger.info("Using Qwen VL for UI detection")
                 vision_model = QwenClient(self.lm_studio_url.get())

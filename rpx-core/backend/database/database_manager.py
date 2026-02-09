@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     """Manages SQLite database for benchmark automation system"""
     
-    def __init__(self, db_path: str = "gemma_benchmark.db"):
+    def __init__(self, db_path: str = "rpx_benchmark.db"):
         # Ensure database directory exists
         db_dir = Path(db_path).parent
         if str(db_dir) != '.':  # Only create if not current directory

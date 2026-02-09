@@ -19,9 +19,9 @@ docs/
 │   └── ui-animations.md               # Frontend motion animations
 ├── plans/                             # Implementation plans (historical)
 │   ├── README.md                      # Plan index with status
-│   ├── gemma-roadmap-2025.md          # Development priorities
-│   ├── gemma-frontend-control-center.md
-│   ├── gemma-preset-manager-integration.md
+│   ├── rpx-roadmap-2025.md            # Development priorities
+│   ├── rpx-frontend-control-center.md
+│   ├── rpx-preset-manager-integration.md
 │   ├── omniparser-server-management.md
 │   ├── performance-extraction-intel-tracing.md
 │   ├── queue-service-multi-server-omniparser.md

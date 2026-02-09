@@ -262,7 +262,7 @@ def main():
         '--logs-dir', '-d',
         type=Path,
         default=None,
-        help='Path to logs/runs directory (default: Gemma/logs/runs)'
+        help='Path to logs/runs directory (default: rpx-core/logs/runs)'
     )
     parser.add_argument(
         '--verbose', '-v',
@@ -281,8 +281,8 @@ def main():
     else:
         # Default: look relative to script location
         script_dir = Path(__file__).parent
-        gemma_dir = script_dir.parent
-        logs_dir = gemma_dir / "logs" / "runs"
+        rpx_dir = script_dir.parent
+        logs_dir = rpx_dir / "logs" / "runs"
 
     logger.info("=" * 60)
     logger.info("Campaign Log Migration Tool")

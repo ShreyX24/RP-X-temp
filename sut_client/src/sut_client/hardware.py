@@ -2,7 +2,7 @@
 Hardware detection utilities for SUT Client
 Provides CPU model detection, cleanup for display names, and DPI awareness.
 
-DPI awareness added from KATANA Gemma v0.2
+DPI awareness added from KATANA RPX v0.2
 """
 
 import platform
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# DPI Awareness (from KATANA Gemma v0.2)
+# DPI Awareness (from KATANA RPX v0.2)
 # =============================================================================
 
 def set_dpi_awareness():

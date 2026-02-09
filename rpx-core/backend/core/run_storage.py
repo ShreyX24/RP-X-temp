@@ -273,12 +273,12 @@ class RunStorageManager:
         Initialize RunStorageManager.
 
         Args:
-            base_dir: Base directory for logs. Defaults to Gemma/logs/runs/
+            base_dir: Base directory for logs. Defaults to rpx-core/logs/runs/
         """
         if base_dir is None:
-            # Default to Gemma/logs/runs/
-            gemma_dir = Path(__file__).parent.parent.parent
-            base_dir = gemma_dir / "logs" / "runs"
+            # Default to rpx-core/logs/runs/
+            rpx_dir = Path(__file__).parent.parent.parent
+            base_dir = rpx_dir / "logs" / "runs"
 
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)

@@ -41,7 +41,7 @@ class OmniparserClient:
 
         self.session.headers.update({
             'Content-Type': 'application/json',
-            'User-Agent': 'Gemma-Backend-Client/2.0'
+            'User-Agent': 'RPX-Backend-Client/2.0'
         })
 
         logger.debug(f"OmniparserClient initialized with URL: {api_url}")

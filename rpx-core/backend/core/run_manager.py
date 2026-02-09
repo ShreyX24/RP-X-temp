@@ -243,16 +243,16 @@ class RunManager:
             manifests = self.storage.load_run_history()
             stale_count = 0
             for manifest in manifests:
-                # Fix stale "running" runs - they were interrupted by Gemma restart
+                # Fix stale "running" runs - they were interrupted by RPX restart
                 if manifest.status == 'running':
                     stale_count += 1
                     manifest.status = 'failed'
-                    manifest.error = 'Run interrupted - Gemma was restarted'
+                    manifest.error = 'Run interrupted - RPX was restarted'
                     manifest.completed_at = datetime.now().isoformat()
                     # Update the manifest on disk
                     try:
                         self.storage.update_manifest(manifest)
-                        logger.info(f"Marked stale run {manifest.run_id} as failed (Gemma restart)")
+                        logger.info(f"Marked stale run {manifest.run_id} as failed (RPX restart)")
                     except Exception as update_err:
                         logger.warning(f"Failed to update stale run manifest: {update_err}")
 
@@ -1360,7 +1360,7 @@ class RunManager:
             recovered_count = 0
             for run_id, run_data in active_runs.items():
                 try:
-                    # These runs were executing when Gemma crashed
+                    # These runs were executing when RPX crashed
                     # Their manifests should exist on disk, just need status update
                     folder_name = run_data.get('folder_name')
                     if folder_name:
@@ -1372,7 +1372,7 @@ class RunManager:
 
                             if manifest_data.get('status') == 'running':
                                 manifest_data['status'] = 'failed'
-                                manifest_data['error'] = 'Run interrupted - Gemma was restarted'
+                                manifest_data['error'] = 'Run interrupted - RPX was restarted'
                                 manifest_data['completed_at'] = datetime.now().isoformat()
 
                                 with open(manifest_path, 'w') as mf:

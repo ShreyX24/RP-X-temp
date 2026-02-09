@@ -602,18 +602,18 @@ def terminate_process_by_name(process_name):
 
 @app.route('/status', methods=['GET'])
 def status():
-    """Enhanced status endpoint with capabilities and Gemma identification."""
+    """Enhanced status endpoint with capabilities and RPX identification."""
     import socket
     import platform
     import uuid
 
     # Generate or get unique device ID
-    device_id = f"gemma_sut_{platform.node()}_{uuid.getnode()}"
+    device_id = f"rpx_sut_{platform.node()}_{uuid.getnode()}"
 
     return jsonify({
         "status": "running",
         "version": "3.1-enhanced",
-        "gemma_sut_signature": "gemma_sut_v2",  # Unique identifier for Gemma SUTs
+        "rpx_sut_signature": "rpx_sut_v2",  # Unique identifier for RPX SUTs
         "device_id": device_id,
         "hostname": platform.node(),
         "platform": platform.system(),

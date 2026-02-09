@@ -2,7 +2,7 @@
 Input Controller Module - Windows SendInput API
 Provides low-level mouse and keyboard input automation.
 
-Ported from KATANA Gemma v0.2
+Ported from KATANA RPX v0.2
 Author: SATYAJIT BHUYAN (satyajit.bhuyan@intel.com)
 """
 

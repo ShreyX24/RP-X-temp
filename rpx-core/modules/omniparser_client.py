@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from PIL import Image
 
-from modules.gemma_client import BoundingBox  # Reuse the BoundingBox class
+from modules.vision_client import BoundingBox  # Reuse the BoundingBox class
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,7 @@
 Game Launcher Module
 Handles game launching via Steam protocol and direct executable.
 
-Ported from KATANA Gemma v0.2
+Ported from KATANA RPX v0.2
 Author: SATYAJIT BHUYAN (satyajit.bhuyan@intel.com)
 """
 
@@ -526,7 +526,7 @@ def launch_game(
         time.sleep(3)  # Initial wait for process spawn
 
         # NOTE: Steam conflict detection (account in use on another computer) is now
-        # handled by the Gemma backend using OmniParser to parse screenshots after launch.
+        # handled by the RPX backend using OmniParser to parse screenshots after launch.
         # This allows for reliable detection of the SDL-rendered dialog.
 
         if game_process:

@@ -1,7 +1,7 @@
 """
 SUT Proxy API endpoints - ALL SUT communication goes through here.
 
-Neither Gemma nor Preset-Manager talk directly to SUTs.
+Neither RPX nor Preset-Manager talk directly to SUTs.
 This is the single gateway for all SUT API calls.
 """
 

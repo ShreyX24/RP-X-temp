@@ -23,7 +23,7 @@ Your RPX platform is a **well-structured microservices-based game automation sys
     ┌─────────────────┬───────────────┼───────────────┬─────────────────┐
     ▼                 ▼               ▼               ▼                 ▼
 ┌────────┐     ┌───────────┐   ┌───────────┐   ┌──────────┐     ┌───────────┐
-│ Queue  │     │  Gemma    │   │  Preset   │   │   SUT    │     │ OmniParser│
+│ Queue  │     │   RPX     │   │  Preset   │   │   SUT    │     │ OmniParser│
 │Service │◄───►│  Backend  │◄──│  Manager  │──►│Discovery │     │  Servers  │
 │ :9000  │     │  :5000    │   │  :5002    │   │  :5001   │     │:8000-8004 │
 └───┬────┘     └─────┬─────┘   └─────┬─────┘   └─────┬────┘     └─────┬─────┘
@@ -165,7 +165,7 @@ From [PrimeQA](https://primeqasolutions.com/scaling-test-automation-in-distribut
 | Retry | Manual in each client | Queue-handled with DLQ | Reliability |
 | Scaling | Limited | Independent per service | Scalability |
 
-**Impact**: If Queue Service is slow/down, Gemma Backend blocks. If OmniParser takes long, the whole automation waits synchronously.
+**Impact**: If Queue Service is slow/down, RPX Backend blocks. If OmniParser takes long, the whole automation waits synchronously.
 
 **Recommendation**: Introduce Redis pub/sub or RabbitMQ for:
 - OmniParser request queue (already partially implemented!)
@@ -425,7 +425,7 @@ Your architecture is **deployable for small-to-medium scale** (5-15 SUTs, single
 
 ## Appendix A: Service-by-Service Summary
 
-### RPX Backend (Gemma Backend) - Port 5000
+### RPX Backend - Port 5000
 - **Framework**: Flask 3.0+ with Flask-SocketIO
 - **Communication**: HTTP REST API + WebSocket for real-time
 - **Key Features**: Run orchestration, timeline events, campaign management

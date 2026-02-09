@@ -603,7 +603,7 @@ class SUTController:
             # Import required modules
             from modules.network import NetworkManager
             from modules.screenshot import ScreenshotManager
-            from modules.gemma_client import GemmaClient
+            from modules.vision_client import VisionClient
             from modules.qwen_client import QwenClient
             from modules.omniparser_client import OmniparserClient
             from modules.annotator import Annotator
@@ -637,8 +637,8 @@ class SUTController:
             # Initialize vision model based on shared settings
             vision_model_type = shared_settings.get("vision_model", "omniparser")
             if vision_model_type == 'gemma':
-                self.logger.info("Using Gemma for UI detection")
-                vision_model = GemmaClient(shared_settings.get("lm_studio_url"))
+                self.logger.info("Using LM Studio vision model for UI detection")
+                vision_model = VisionClient(shared_settings.get("lm_studio_url"))
             elif vision_model_type == 'qwen':
                 self.logger.info("Using Qwen VL for UI detection")
                 vision_model = QwenClient(shared_settings.get("lm_studio_url"))
@@ -769,7 +769,7 @@ class SUTController:
             # Import required modules
             from modules.network import NetworkManager
             from modules.screenshot import ScreenshotManager
-            from modules.gemma_client import GemmaClient
+            from modules.vision_client import VisionClient
             from modules.qwen_client import QwenClient
             from modules.omniparser_client import OmniparserClient
             from modules.annotator import Annotator
@@ -802,7 +802,7 @@ class SUTController:
             # Initialize vision model
             vision_model_type = shared_settings.get("vision_model", "omniparser")
             if vision_model_type == 'gemma':
-                vision_model = GemmaClient(shared_settings.get("lm_studio_url"))
+                vision_model = VisionClient(shared_settings.get("lm_studio_url"))
             elif vision_model_type == 'qwen':
                 vision_model = QwenClient(shared_settings.get("lm_studio_url"))
             elif vision_model_type == 'omniparser':
@@ -1122,7 +1122,7 @@ class MultiSUTGUI:
         ttk.Label(model_row, text="Vision Model:").pack(side=tk.LEFT, padx=(0, 10))
         ttk.Radiobutton(model_row, text="Omniparser", variable=self.vision_model,
                        value="omniparser", command=self.on_vision_model_change).pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Radiobutton(model_row, text="Gemma", variable=self.vision_model,
+        ttk.Radiobutton(model_row, text="LM Studio", variable=self.vision_model,
                        value="gemma", command=self.on_vision_model_change).pack(side=tk.LEFT, padx=(0, 15))
         ttk.Radiobutton(model_row, text="Qwen VL", variable=self.vision_model,
                        value="qwen", command=self.on_vision_model_change).pack(side=tk.LEFT)

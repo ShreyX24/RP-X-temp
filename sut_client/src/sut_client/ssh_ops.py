@@ -66,8 +66,23 @@ def set_window_title(title: str):
 
 
 def print_banner(operation: str):
-    """Print operation banner"""
-    banner = f"""
+    """Print operation banner with box-drawing characters.
+
+    Falls back to ASCII if the terminal can't render Unicode.
+    """
+    try:
+        banner = f"""
+{Colors.PURPLE}\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
+\u2551{Colors.WHITE}                    RAPTOR X SSH OPERATIONS                    {Colors.PURPLE}\u2551
+\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563
+\u2551{Colors.CYAN}  Operation: {Colors.WHITE}{operation:<49}{Colors.PURPLE}\u2551
+\u2551{Colors.CYAN}  Time:      {Colors.WHITE}{datetime.now().strftime('%Y-%m-%d %H:%M:%S'):<49}{Colors.PURPLE}\u2551
+\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d{Colors.RESET}
+"""
+        print(banner)
+    except UnicodeEncodeError:
+        # Fallback to ASCII box
+        banner = f"""
 {Colors.PURPLE}+==============================================================+
 |{Colors.WHITE}                    RAPTOR X SSH OPERATIONS                    {Colors.PURPLE}|
 +==============================================================+
@@ -75,7 +90,7 @@ def print_banner(operation: str):
 |{Colors.CYAN}  Time:      {Colors.WHITE}{datetime.now().strftime('%Y-%m-%d %H:%M:%S'):<49}{Colors.PURPLE}|
 +==============================================================+{Colors.RESET}
 """
-    print(banner)
+        print(banner)
 
 
 def print_status(message: str, status: str = "info"):
@@ -206,9 +221,9 @@ def cmd_update(args):
     print()
 
     # Step 2: Determine paths
-    # SUT Client is installed at: D:\Code\Gemma\sut_client (or similar)
+    # SUT Client is installed at: D:\Code\RPX\sut_client (or similar)
     local_sut_client = Path(__file__).parent.parent.parent  # Go up from ssh_ops.py
-    remote_path = args.remote_path or "/Code/Gemma/RPX/sut_client"
+    remote_path = args.remote_path or "/Code/RPX/sut_client"
 
     print_status(f"Local path: {local_sut_client}", "info")
     print_status(f"Remote path: {remote_path}", "info")
@@ -369,7 +384,7 @@ def cmd_push_logs(args):
     # Remote destination
     hostname = socket.gethostname()
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    remote_dest = args.remote_path or f"/Code/Gemma/RPX/logs/{hostname}/{timestamp}"
+    remote_dest = args.remote_path or f"/Code/RPX/logs/{hostname}/{timestamp}"
 
     print_status(f"Remote destination: {remote_dest}", "info")
     print()

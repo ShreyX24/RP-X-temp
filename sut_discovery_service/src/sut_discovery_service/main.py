@@ -4,6 +4,8 @@ SUT Discovery Service - FastAPI application entry point.
 
 import argparse
 import logging
+import platform
+import subprocess
 import sys
 from contextlib import asynccontextmanager
 
@@ -110,6 +112,46 @@ app.include_router(proxy_router, prefix="/api")
 app.include_router(health_router)
 
 
+def _ensure_firewall_rule(port: int, protocol: str = "tcp",
+                          rule_name: str = "SUT Discovery Service") -> bool:
+    """
+    Ensure Windows Firewall rule exists for the given port.
+    Creates the rule if it doesn't exist (requires admin privileges).
+    """
+    if platform.system() != "Windows":
+        return True
+
+    full_name = f"{rule_name} ({protocol.upper()} {port})"
+
+    # Check if rule already exists
+    check_cmd = f'netsh advfirewall firewall show rule name="{full_name}" >nul 2>&1'
+    result = subprocess.run(check_cmd, shell=True, capture_output=True)
+
+    if result.returncode == 0:
+        logger.info(f"Firewall rule '{full_name}' already exists")
+        return True
+
+    # Try to create the rule
+    logger.info(f"Creating firewall rule '{full_name}'...")
+    create_cmd = (
+        f'netsh advfirewall firewall add rule name="{full_name}" '
+        f'dir=in action=allow protocol={protocol} localport={port} '
+        f'enable=yes profile=any'
+    )
+
+    result = subprocess.run(create_cmd, shell=True, capture_output=True, text=True)
+    if result.returncode == 0:
+        logger.info(f"Firewall rule '{full_name}' created successfully")
+        return True
+    else:
+        logger.warning(
+            f"Could not create firewall rule (needs admin). "
+            f"Run once as Administrator or manually add rule:\n"
+            f"  {create_cmd}"
+        )
+        return False
+
+
 def main():
     """Run the SUT Discovery Service."""
     parser = argparse.ArgumentParser(description="SUT Discovery Service")
@@ -152,6 +194,10 @@ def main():
 
     # Set log level
     logging.getLogger().setLevel(getattr(logging, args.log_level))
+
+    # Ensure firewall rules exist for TCP (HTTP/WebSocket) and UDP (broadcast)
+    _ensure_firewall_rule(args.port, protocol="tcp")
+    _ensure_firewall_rule(args.udp_port, protocol="udp")
 
     logger.info(f"Starting SUT Discovery Service on {args.host}:{args.port}")
 

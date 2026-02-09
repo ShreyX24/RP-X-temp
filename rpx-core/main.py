@@ -14,7 +14,7 @@ from pathlib import Path
 
 from modules.network import NetworkManager
 from modules.screenshot import ScreenshotManager
-from modules.gemma_client import GemmaClient
+from modules.vision_client import VisionClient
 from modules.qwen_client import QwenClient
 from modules.omniparser_client import OmniparserClient
 from modules.annotator import Annotator
@@ -72,8 +72,8 @@ def parse_arguments():
     
     # Optional arguments with sensible defaults
     parser.add_argument('--sut-port', type=int, default=8080, help='Port for communication with SUT')
-    parser.add_argument('--vision-model', type=str, choices=['gemma', 'qwen', 'omniparser'], default='gemma',
-                      help='Vision model to use for UI detection (default: gemma)')
+    parser.add_argument('--vision-model', type=str, choices=['gemma', 'qwen', 'omniparser'], default='omniparser',
+                      help='Vision model to use for UI detection (default: omniparser)')
     parser.add_argument('--model-url', type=str, default='http://127.0.0.1:1234', 
                       help='URL for the vision model API (default: http://127.0.0.1:1234)')
     parser.add_argument('--max-iterations', type=int, default=50,
@@ -208,8 +208,8 @@ def main():
         
         # Initialize the vision model based on user selection
         if args.vision_model == 'gemma':
-            logger.info("Using Gemma for UI detection")
-            vision_model = GemmaClient(args.model_url)
+            logger.info("Using LM Studio vision model for UI detection")
+            vision_model = VisionClient(args.model_url)
         elif args.vision_model == 'qwen':
             logger.info("Using Qwen VL for UI detection")
             vision_model = QwenClient(args.model_url)

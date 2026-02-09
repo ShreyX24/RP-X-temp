@@ -1,12 +1,12 @@
-# Gemma Frontend - Comprehensive Control Center Plan
+# RPX Frontend - Comprehensive Control Center Plan
 
 ## Overview
 
-Transform the Gemma frontend into a **one-stop control center** that exposes every feature, status, control, and signal from across the entire Gemma project.
+Transform the RPX frontend into a **one-stop control center** that exposes every feature, status, control, and signal from across the entire RPX project.
 
 ### User Direction
 - **Priority**: Full Dashboard First - comprehensive overview with all service metrics
-- **PM Frontend**: Keep both - Gemma shows summary, PM Frontend for deep preset management
+- **PM Frontend**: Keep both - RPX shows summary, PM Frontend for deep preset management
 - **SUT Interaction**: Via Workflow Builder - screenshots, OmniParser, input actions, game launch
 - **UI Density**: Information dense - power user focused, maximum data on screen
 
@@ -14,7 +14,7 @@ Transform the Gemma frontend into a **one-stop control center** that exposes eve
 
 ## Current State
 
-### Existing Gemma Frontend (`D:\Code\Gemma\Gemma\admin\`)
+### Existing RPX Frontend (`D:\Code\Gemma\Gemma\admin\`)
 - **Tech Stack**: React 19, Vite 6, TypeScript, Tailwind CSS 4, Socket.io
 - **Pages**: Dashboard, Devices, Games, Runs (4 pages)
 - **Components**: StatusBadge, ServiceStatus, SUTCard, GameCard, RunCard, LogViewer (6 components)
@@ -58,7 +58,7 @@ Transform the Gemma frontend into a **one-stop control center** that exposes eve
 | `GET /api/backups` | Backup inventory |
 | `POST /api/sync/bulk` | Bulk preset sync |
 
-### 4. Gemma Backend (Port 5000)
+### 4. RPX Backend (Port 5000)
 | Endpoint | What We Can Show |
 |----------|------------------|
 | `GET /api/status` | Full system status |
@@ -72,7 +72,7 @@ Transform the Gemma frontend into a **one-stop control center** that exposes eve
 
 ### A. Dashboard Overview (Enhanced)
 1. **Service Health Grid** - All services with live status
-   - Gemma Backend (running/stopped)
+   - RPX Backend (running/stopped)
    - SUT Discovery Service (running/stopped)
    - Queue Service (running/stopped + queue depth)
    - Preset Manager (running/stopped)
@@ -281,7 +281,7 @@ runWorkflow(sutId, workflow): RunResult
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ HEADER: Gemma Control Center          [Refresh All] [Settings]  │
+│ HEADER: RPX Control Center             [Refresh All] [Settings]  │
 ├─────────────────────────────────────────────────────────────────┤
 │ SERVICE HEALTH BAR (horizontal strip)                           │
 │ [●Backend] [●Discovery] [●Queue:12] [●Preset] [●OP1] [●OP2]    │
@@ -465,7 +465,7 @@ POST /api/runs { sut_ip, game_name, workflow }
 - Pages: `src/pages/`
 
 ### Service Ports
-- Gemma Backend: 5000
+- RPX Backend: 5000
 - SUT Discovery: 5001
 - Preset Manager: 5002
 - Queue Service: 9000

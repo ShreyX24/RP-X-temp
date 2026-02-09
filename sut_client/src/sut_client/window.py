@@ -2,7 +2,7 @@
 Window Detection and Management Module
 Provides pywinauto-based window detection with Win32 API fallback.
 
-Ported from KATANA Gemma v0.2
+Ported from KATANA RPX v0.2
 Author: SATYAJIT BHUYAN (satyajit.bhuyan@intel.com)
 """
 

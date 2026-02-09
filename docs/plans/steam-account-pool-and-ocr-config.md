@@ -24,7 +24,7 @@ Implement a centralized **Account Pool Manager** for multi-SUT automation:
                               │
                               ▼ (STEAM_ACCOUNT_PAIRS env var)
 ┌─────────────────────────────────────────────────────────────┐
-│                     Gemma Backend                            │
+│                     RPX Backend                              │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │              Account Pool Manager                    │    │
 │  │  - Pool of account pairs                            │    │
@@ -96,9 +96,9 @@ Add `SteamAccountPairsTab` widget (like OmniParserServersTab):
 ---
 
 ### 3. `service_manager/src/service_manager/services/process_manager.py`
-Inject `STEAM_ACCOUNT_PAIRS` env var when starting gemma-backend:
+Inject `STEAM_ACCOUNT_PAIRS` env var when starting rpx-backend:
 ```python
-if name == "gemma-backend":
+if name == "rpx-backend":
     pairs_json = settings.get_steam_account_pairs_env()
     if pairs_json:
         env.insert("STEAM_ACCOUNT_PAIRS", pairs_json)
@@ -285,7 +285,7 @@ def get_account_pool_status():
 
 ```
 Service Manager UI → settings.json → ProcessManager (STEAM_ACCOUNT_PAIRS env)
-→ Gemma Backend → AccountPoolManager (singleton)
+→ RPX Backend → AccountPoolManager (singleton)
 → AutomationOrchestrator.execute_run():
     1. acquire_account_pair(sut_id) at session start
     2. For each game: get_account_for_game(sut_id, game_name)

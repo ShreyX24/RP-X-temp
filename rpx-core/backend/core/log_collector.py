@@ -58,7 +58,7 @@ class LogCollector:
         self.sut_client = sut_client
 
         if project_root is None:
-            # Default to parent of Gemma/backend/core
+            # Default to parent of rpx-core/backend/core
             project_root = Path(__file__).parent.parent.parent.parent
         self.project_root = project_root
 

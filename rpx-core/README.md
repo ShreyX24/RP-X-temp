@@ -2,7 +2,7 @@
 
 **Version: Nightly Release (December 2024)**
 
-Katana (formerly Gemma) is a **computer vision-based game automation and benchmarking framework**. It uses a distributed Client-Server architecture where a Controller machine orchestrates multiple Systems Under Test (SUTs) running game workloads.
+Katana (formerly RPX) is a **computer vision-based game automation and benchmarking framework**. It uses a distributed Client-Server architecture where a Controller machine orchestrates multiple Systems Under Test (SUTs) running game workloads.
 
 ---
 
@@ -36,7 +36,7 @@ Katana/
 │   ├── simple_automation.py  # Step-based automation engine
 │   ├── decision_engine.py    # State machine automation engine
 │   ├── omniparser_client.py  # OmniParser vision model client
-│   ├── gemma_client.py       # Gemma/LM Studio vision client
+│   ├── gemma_client.py       # Gemma 3/LM Studio vision client
 │   ├── qwen_client.py        # Qwen VL vision client
 │   └── annotator.py          # Screenshot annotation utilities
 │

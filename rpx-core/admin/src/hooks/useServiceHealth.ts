@@ -125,7 +125,7 @@ export function useServiceHealth(pollInterval: number = 5000): UseServiceHealthR
               lastKnownStatusRef.current['raptor-x-backend'] = 'offline';
             }
 
-            console.debug(`[ServiceHealth] Gemma check failed (${failCount}/${FAILURE_THRESHOLD}), status: ${newStatus}`, err);
+            console.debug(`[ServiceHealth] RPX check failed (${failCount}/${FAILURE_THRESHOLD}), status: ${newStatus}`, err);
 
             return {
               name: 'raptor-x-backend',

@@ -2,7 +2,7 @@
 System utilities for SUT Client
 Provides PC rename, process management, and other system-level operations
 
-Merged with KATANA Gemma v0.2 process management functions
+Merged with KATANA RPX v0.2 process management functions
 """
 
 import os
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Process Detection (from KATANA Gemma v0.2)
+# Process Detection (from KATANA RPX v0.2)
 # =============================================================================
 
 def find_process_by_name(process_name: str, exact_only: bool = True) -> Optional[psutil.Process]:

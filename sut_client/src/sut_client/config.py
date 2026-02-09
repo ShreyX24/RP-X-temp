@@ -47,7 +47,7 @@ class SUTSettings(BaseSettings):
     request_timeout: int = Field(default=30, description="HTTP request timeout")
 
     # ==========================================================================
-    # Game Launch Settings (from KATANA Gemma v0.2)
+    # Game Launch Settings (from KATANA RPX v0.2)
     # ==========================================================================
 
     # Window detection timeouts (pywinauto)

@@ -11,8 +11,8 @@ Implement a self-updating mechanism for RPX that allows all components (SUT clie
    - Most critical for self-update (manual updates are tedious)
 
 2. **Main RPX System** (entire `RPX/` root)
-   - Gemma Backend
-   - Gemma Frontend (Admin Dashboard)
+   - RPX Backend
+   - RPX Frontend (Admin Dashboard)
    - Preset Manager
    - Queue Service
    - SUT Discovery Service

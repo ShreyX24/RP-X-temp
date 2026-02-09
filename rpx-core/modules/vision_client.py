@@ -1,5 +1,5 @@
 """
-Client for interacting with the Gemma model running in LMStudio.
+Client for interacting with a vision model running in LM Studio.
 Uses the OpenAI-compatible API to send images and get UI element detections.
 """
 
@@ -25,12 +25,12 @@ class BoundingBox:
     element_type: str
     element_text: str = ""
 
-class GemmaClient:
-    """Client for the Gemma LLM API running in LM Studio."""
+class VisionClient:
+    """Client for the LM Studio vision API."""
     
     def __init__(self, api_url: str = "http://127.0.0.1:1234"):
         """
-        Initialize the Gemma client.
+        Initialize the Vision client.
         
         Args:
             api_url: URL of the LM Studio API (default: http://127.0.0.1:1234)
@@ -64,7 +64,7 @@ Your entire response must be valid JSON in this format:
 
 Respond ONLY with JSON and nothing else."""
         
-        logger.info(f"GemmaClient initialized with API URL: {api_url}")
+        logger.info(f"VisionClient initialized with API URL: {api_url}")
         
         # Test connection to the API
         try:
@@ -186,7 +186,7 @@ Respond ONLY with JSON and nothing else."""
     
     def detect_ui_elements(self, image_path: str) -> List[BoundingBox]:
         """
-        Send an image to Gemma and get UI element detections.
+        Send an image to the vision model and get UI element detections.
         
         Args:
             image_path: Path to the screenshot image
@@ -293,4 +293,4 @@ Respond ONLY with JSON and nothing else."""
     def close(self):
         """Close the session."""
         self.session.close()
-        logger.info("Gemma client session closed")
+        logger.info("Vision client session closed")

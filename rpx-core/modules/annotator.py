@@ -9,7 +9,7 @@ from typing import List
 from PIL import Image, ImageDraw, ImageFont
 import colorsys
 
-from modules.gemma_client import BoundingBox
+from modules.vision_client import BoundingBox
 
 logger = logging.getLogger(__name__)
 

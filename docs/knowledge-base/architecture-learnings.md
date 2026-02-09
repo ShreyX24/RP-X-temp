@@ -1,4 +1,4 @@
-# Gemma Architecture Learnings
+# RPX Architecture Learnings
 
 > **Last Updated**: 2025-12-28
 > **Purpose**: Document architectural decisions and learnings from development
@@ -18,7 +18,7 @@
 - Security risk exposing SUT IPs/ports directly to browser
 - Breaks single-source-of-truth principle
 
-**Solution**: All SUT communication must be proxied through Gemma Backend.
+**Solution**: All SUT communication must be proxied through RPX Backend.
 
 ```
 WRONG:
@@ -29,7 +29,7 @@ WRONG:
 
 CORRECT:
 ┌─────────────┐      ┌─────────────────┐      ┌─────────────┐
-│   Frontend  │ ──── │  Gemma Backend  │ ──── │     SUT     │
+│   Frontend  │ ──── │  RPX Backend    │ ──── │     SUT     │
 │ (Browser)   │      │   (port 5000)   │      │ (port 8080) │
 └─────────────┘      └─────────────────┘      └─────────────┘
 ```
@@ -39,7 +39,7 @@ CORRECT:
 // WRONG - Direct SUT call (CORS blocked)
 fetch(`http://${sutIp}:8080/system_info`)
 
-// CORRECT - Through Gemma backend
+// CORRECT - Through RPX backend
 fetch(`/api/sut/by-ip/${sutIp}/system_info`)
 ```
 
@@ -51,18 +51,18 @@ fetch(`/api/sut/by-ip/${sutIp}/system_info`)
 
 ## Architecture Pattern: Single Backend Gateway
 
-**Rule**: Frontend only knows ONE backend - Gemma Backend
+**Rule**: Frontend only knows ONE backend - RPX Backend
 
-All service communication flows through Gemma:
+All service communication flows through RPX:
 ```
-Frontend → Gemma Backend → SUT Client
-Frontend → Gemma Backend → Discovery Service
-Frontend → Gemma Backend → Queue Service
-Frontend → Gemma Backend → Preset Manager
+Frontend → RPX Backend → SUT Client
+Frontend → RPX Backend → Discovery Service
+Frontend → RPX Backend → Queue Service
+Frontend → RPX Backend → Preset Manager
 ```
 
 **Benefits**:
-1. Single CORS configuration (Gemma Backend only)
+1. Single CORS configuration (RPX Backend only)
 2. Centralized auth/security
 3. Single API versioning
 4. Backend can aggregate/transform data
@@ -79,7 +79,7 @@ Frontend → Gemma Backend → Preset Manager
 **Source of Truth**: `ZEL-X7 (192.168.0.106)` at `D:\Code\Gemma\sut_client\`
 
 **Rule**: The SUT version IS the source of truth. Edit directly on SUT via SSH.
-- NO local copy in Gemma-e2e repo
+- NO local copy in RPX repo
 - sut_client only runs on SUTs, not development machine
 
 ### SSH Access to SUT
@@ -118,7 +118,7 @@ scp local_file.py shrey@192.168.0.106:"D:/Code/Gemma/sut_client/src/sut_client/"
 
 The SUT client should NOT have CORS enabled because:
 - Frontend NEVER talks directly to SUT
-- All communication goes through Gemma Backend
+- All communication goes through RPX Backend
 - CORS on SUT would wrongly suggest direct browser access is allowed
 
 ---
@@ -235,13 +235,13 @@ SUT_CLIENT_PORT=5555 sut-client
 
 **Why SUT Client Can't Detect**: Steam uses SDL rendering. Dialogs are rendered inside the main SDL window, not as separate Win32 windows. Win32 EnumWindows/EnumChildWindows cannot see them.
 
-**Solution**: Use OmniParser (screenshot + OCR) from the Gemma backend.
+**Solution**: Use OmniParser (screenshot + OCR) from the RPX backend.
 
 ### Architecture
 
 ```
 ┌────────────────┐                    ┌─────────────────┐
-│  Gemma Backend │                    │   SUT Client    │
+│  RPX Backend   │                    │   SUT Client    │
 │                │                    │                 │
 │  1. Launch game ─────────────────────→ Launch via Steam
 │                │                    │                 │

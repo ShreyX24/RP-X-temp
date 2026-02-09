@@ -2,7 +2,7 @@
 Steam Integration Module
 Handles Steam installation detection, library paths, and auto-login.
 
-Merged from KATANA Gemma v0.2 and Preset Manager
+Merged from KATANA RPX v0.2 and Preset Manager
 """
 
 import os
@@ -255,7 +255,7 @@ def verify_steam_login(timeout: int = 45) -> Tuple[bool, Optional[int], Optional
     Verify that Steam is logged in via registry check (ActiveUser != 0).
 
     NOTE: Steam conflict detection (account in use elsewhere) is now handled
-    by the Gemma backend using OmniParser to parse screenshots after game launch.
+    by the RPX backend using OmniParser to parse screenshots after game launch.
     This function only checks the registry for successful login.
 
     Args:
@@ -335,7 +335,7 @@ def login_steam(username: str, password: str, timeout: int = 180) -> Dict[str, A
     5. Wait and verify login via registry
 
     NOTE: Steam conflict detection (account in use elsewhere) is now handled
-    by the Gemma backend using OmniParser after game launch.
+    by the RPX backend using OmniParser after game launch.
 
     Args:
         username: Steam username

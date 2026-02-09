@@ -9,7 +9,7 @@ import logging
 import yaml
 from typing import List, Dict, Any, Optional, Union
 
-from modules.gemma_client import BoundingBox
+from modules.vision_client import BoundingBox
 
 logger = logging.getLogger(__name__)
 
@@ -723,7 +723,7 @@ class SimpleAutomation:
 # import yaml
 # from typing import List, Dict, Any, Optional
 
-# from modules.gemma_client import BoundingBox
+# from modules.vision_client import BoundingBox
 
 # logger = logging.getLogger(__name__)
 

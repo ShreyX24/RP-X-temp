@@ -1,8 +1,8 @@
-# Gemma Service Manager GUI
+# RPX Service Manager GUI
 
 ## Overview
 
-A PySide6-based GUI application to manage all Gemma services with:
+A PySide6-based GUI application to manage all RPX services with:
 - Sidebar tree with service list
 - Embedded log panels showing real-time output
 - Start/Stop controls
@@ -13,8 +13,8 @@ A PySide6-based GUI application to manage all Gemma services with:
 
 | Service | Command | Working Dir | Port |
 |---------|---------|-------------|------|
-| Gemma Backend | `gemma --port 5000` | `Gemma/` | 5000 |
-| Gemma Frontend | `npm run dev -- --host` | `Gemma/admin/` | 3000 |
+| RPX Backend | `rpx --port 5000` | `rpx-core/` | 5000 |
+| RPX Frontend | `npm run dev -- --host` | `rpx-core/admin/` | 3000 |
 | SUT Discovery | `sut-discovery --port 5001` | `sut_discovery_service/` | 5001 |
 | Queue Service | `queue-service --port 9000` | `queue_service/` | 9000 |
 | Queue Dashboard | `queue-dashboard --url http://localhost:9000` | `queue_service/` | - |
@@ -91,22 +91,22 @@ SERVICES = [
         group="Core Services",
     ),
     ServiceConfig(
-        name="gemma-backend",
-        display_name="Gemma Backend",
-        command=["gemma", "--port", "5000"],
-        working_dir=BASE_DIR / "Gemma",
+        name="rpx-backend",
+        display_name="RPX Backend",
+        command=["rpx", "--port", "5000"],
+        working_dir=BASE_DIR / "rpx-core",
         port=5000,
-        group="Gemma",
+        group="RPX",
         depends_on=["sut-discovery"],
     ),
     ServiceConfig(
-        name="gemma-frontend",
-        display_name="Gemma Frontend",
+        name="rpx-frontend",
+        display_name="RPX Frontend",
         command=["npm", "run", "dev", "--", "--host"],
-        working_dir=BASE_DIR / "Gemma" / "admin",
+        working_dir=BASE_DIR / "rpx-core" / "admin",
         port=3000,
-        group="Gemma",
-        depends_on=["gemma-backend"],
+        group="RPX",
+        depends_on=["rpx-backend"],
         startup_delay=5.0,
     ),
     ServiceConfig(
@@ -143,7 +143,7 @@ from PySide6.QtCore import Qt
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Gemma Service Manager")
+        self.setWindowTitle("RPX Service Manager")
         self.resize(1400, 900)
 
         # Main splitter: sidebar | log panels
@@ -350,15 +350,15 @@ class ProcessManager(QObject):
 |   * SUT Discovery|  | SUT Discovery       | Queue Service       | |
 |   * Queue Service|  | 2025-12... INFO ... | 2025-12... INFO ... | |
 |                  |  | ...                 | ...                 | |
-| v Gemma          |  +---------------------+----------------------+ |
-|   * Backend      |  | Gemma Backend       | Gemma Frontend      | |
+| v RPX            |  +---------------------+----------------------+ |
+|   * Backend      |  | RPX Backend         | RPX Frontend        | |
 |   * Frontend     |  | 2025-12... INFO ... | ready - started ... | |
 |                  |  | ...                 | ...                 | |
 | v Preset Manager |  +---------------------+----------------------+ |
 |   * Backend      |  |                                            | |
 |   * Frontend     |  |                                            | |
 +------------------+------------------------------------------------+
-| Status: 4/7 services running | SUT Discovery: 5001 | Gemma: 5000  |
+| Status: 4/7 services running | SUT Discovery: 5001 | RPX: 5000    |
 +---------------------------------------------------------------+
 ```
 
@@ -403,17 +403,17 @@ class ProcessManager(QObject):
 
 ```toml
 [project]
-name = "gemma-service-manager"
+name = "rpx-service-manager"
 version = "1.0.0"
 dependencies = [
     "PySide6>=6.6.0",
 ]
 
 [project.scripts]
-gemma-manager = "service_manager:main"
+rpx-manager = "service_manager:main"
 
 [project.gui-scripts]
-gemma-manager-gui = "service_manager:main"
+rpx-manager-gui = "service_manager:main"
 ```
 
 ---
@@ -482,7 +482,7 @@ Stopping: ⏳ (yellow #dcdcaa) - Disabled
 +------------------------------------------------------------------+
 | [Service Name]  [Status Badge]  [IP:Port]     [▶/⏹] [Hide] [Clear]|
 +------------------------------------------------------------------+
-| Gemma Backend   Running         192.168.0.1:5000   ⏹   Hide  Clear|
+| RPX Backend     Running         192.168.0.1:5000   ⏹   Hide  Clear|
 +------------------------------------------------------------------+
 ```
 
@@ -497,10 +497,10 @@ Remove tree indentation. Show flat list with status dots and IP info.
 +---------------------------+
 | Services           [⚙]    |  <- Settings button
 |---------------------------|
-| ● Gemma Backend           |  <- Green dot = running
+| ● RPX Backend             |  <- Green dot = running
 |   192.168.0.1:5000        |  <- IP:Port below name
 |---------------------------|
-| ○ Gemma Frontend          |  <- Gray dot = stopped
+| ○ RPX Frontend            |  <- Gray dot = stopped
 |   localhost:3000          |
 |---------------------------|
 | ◐ SUT Discovery           |  <- Half dot = starting
@@ -525,7 +525,7 @@ Remove tree indentation. Show flat list with status dots and IP info.
 
 ### Config File Location
 ```
-~/.gemma/service_manager_config.json
+~/.rpx/service_manager_config.json
 ```
 
 ### Config Schema
@@ -546,13 +546,13 @@ Remove tree indentation. Show flat list with status dots and IP info.
       "enabled": true,
       "remote": true
     },
-    "gemma-backend": {
+    "rpx-backend": {
       "host": "localhost",
       "port": 5000,
       "enabled": true,
       "remote": false
     },
-    "gemma-frontend": {
+    "rpx-frontend": {
       "host": "localhost",
       "port": 3000,
       "enabled": true,
@@ -611,7 +611,7 @@ Shows on first run (when config file doesn't exist).
 **Step 1: Welcome**
 ```
 +-------------------------------------------+
-|         Gemma Service Manager             |
+|         RPX Service Manager               |
 |                                           |
 |  Welcome! Let's configure your services.  |
 |                                           |
@@ -646,8 +646,8 @@ Shows on first run (when config file doesn't exist).
 |  Configuration Summary                    |
 |-------------------------------------------|
 |  Local Services:                          |
-|    - Gemma Backend (localhost:5000)       |
-|    - Gemma Frontend (localhost:3000)      |
+|    - RPX Backend (localhost:5000)         |
+|    - RPX Frontend (localhost:3000)        |
 |                                           |
 |  Remote Services:                         |
 |    - SUT Discovery (192.168.0.100:5001)   |
@@ -677,8 +677,8 @@ Accessible via toolbar button or `Ctrl+,`
 |  |-----------------|---------------|------|--------|  |
 |  | SUT Discovery   | 192.168.0.100 | 5001 | [x]    |  |
 |  | Queue Service   | 192.168.0.101 | 9000 | [x]    |  |
-|  | Gemma Backend   | localhost     | 5000 | [ ]    |  |
-|  | Gemma Frontend  | localhost     | 3000 | [ ]    |  |
+|  | RPX Backend     | localhost     | 5000 | [ ]    |  |
+|  | RPX Frontend    | localhost     | 3000 | [ ]    |  |
 |  | Preset Manager  | localhost     | 5002 | [ ]    |  |
 |  | PM Frontend     | localhost     | 3001 | [ ]    |  |
 |  +-------------------------------------------------+  |

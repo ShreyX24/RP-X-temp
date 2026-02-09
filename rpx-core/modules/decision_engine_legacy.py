@@ -5,7 +5,7 @@ Decision engine for determining the next action based on UI state and YAML confi
 import logging
 from typing import List, Dict, Any, Tuple, Optional
 
-from modules.gemma_client import BoundingBox
+from modules.vision_client import BoundingBox
 
 logger = logging.getLogger(__name__)
 

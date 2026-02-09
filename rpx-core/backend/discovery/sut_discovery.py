@@ -238,7 +238,7 @@ class SUTDiscoveryService:
         if identifier == self.config.sut_identifier_value:
             return True
 
-        # Check for legacy gemma_sut_* identifiers (backward compatibility)
+        # Check for legacy SUT identifiers (backward compatibility)
         legacy_identifier = response_data.get(self.config.legacy_sut_identifier_key)
         if legacy_identifier in self.config.legacy_sut_identifier_values:
             return True

@@ -1069,7 +1069,7 @@ class APIRoutes:
                 return jsonify({"error": str(e)}), 500
 
         # ==========================================================================
-        # PRESET APPLICATION ENDPOINTS (Gemma + Preset-Manager Integration)
+        # PRESET APPLICATION ENDPOINTS (RPX + Preset-Manager Integration)
         # ==========================================================================
 
         @app.route('/api/presets/apply', methods=['POST'])
@@ -1128,7 +1128,7 @@ class APIRoutes:
                         "summary": {"error": "Preset-Manager not configured"}
                     }), 503
 
-                # Call Preset-Manager's gemma-presets endpoint
+                # Call Preset-Manager's presets endpoint
                 result = self.preset_manager_client.apply_presets_sync(
                     sut_ips=sut_ips,
                     games=games,

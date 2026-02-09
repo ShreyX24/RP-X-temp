@@ -38,7 +38,7 @@ Create these widgets:
 ### Phase 5: Flow Diagram
 **New File: `flow_diagram.py`**
 - `FlowDiagramWidget` using QPainter custom drawing
-- Nodes: Gemma, Preset Manager, SUT Discovery, SUT Client, Queue Service, OmniParser
+- Nodes: RPX, Preset Manager, SUT Discovery, SUT Client, Queue Service, OmniParser
 - Connections with arrows between nodes
 - Status colors: green (running), yellow (starting/stopping), gray (stopped), red (unreachable)
 - Connect to `process_manager.status_changed` signal for live updates
@@ -49,7 +49,7 @@ Create these widgets:
 - Add `content_splitter` (vertical) for dashboard_container + log_container
 - Add toolbar "Dashboard View" toggle button (Ctrl+D)
 - `_toggle_dashboard_view()`: Show/hide dashboard, collapse/expand frontend panels
-- `_collapse_frontend_panels()`: Hide log_text, set maxHeight=45 for gemma-frontend, pm-frontend
+- `_collapse_frontend_panels()`: Hide log_text, set maxHeight=45 for rpx-frontend, pm-frontend
 - `_expand_frontend_panels()`: Restore log_text visibility and full height
 - Connect `status_changed` to `flow_diagram.update_status()`
 

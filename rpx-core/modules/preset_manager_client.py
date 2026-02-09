@@ -187,7 +187,7 @@ class PresetManagerClient:
         graphics: str = "high"
     ) -> Dict[str, Any]:
         """
-        Apply presets to SUTs before Gemma automation.
+        Apply presets to SUTs before RPX automation.
 
         Args:
             sut_ips: List of SUT IP addresses
@@ -234,7 +234,7 @@ class PresetManagerClient:
         graphics: str = "high"
     ) -> Dict[str, Any]:
         """
-        Apply presets to SUTs before Gemma automation (sync version for Flask).
+        Apply presets to SUTs before RPX automation (sync version for Flask).
 
         Args:
             sut_ips: List of SUT IP addresses
