@@ -144,6 +144,24 @@ class SteamAccountPair:
         raise ValueError(f"Invalid account pair format: {s}")
 
 
+BANNER_PRESETS = {
+    "purple_white": [93, 135, 141, 183, 189, 231],
+    "cyan_white": [51, 87, 123, 159, 195, 231],
+    "red_yellow": [196, 202, 208, 214, 220, 226],
+    "green_cyan": [46, 48, 50, 51, 87, 123],
+    "blue_purple": [21, 57, 93, 129, 165, 201],
+    "orange_yellow": [208, 214, 220, 226, 227, 231],
+    "pink_white": [199, 205, 211, 217, 223, 231],
+    "fire": [196, 202, 208, 214, 220, 226],
+    "ocean": [17, 18, 19, 20, 21, 27],
+    "forest": [22, 28, 34, 40, 46, 82],
+    "neon": [201, 165, 129, 93, 57, 21],
+    "rainbow": [196, 208, 226, 46, 51, 201],
+}
+
+DEFAULT_BANNER_GRADIENT = [93, 135, 141, 183, 189, 231]
+
+
 class SettingsManager:
     """Manages JSON configuration for the service manager"""
 
@@ -158,6 +176,7 @@ class SettingsManager:
         self._active_profile: str = "local"
         self._project_dir: str = ""  # Base directory for all services
         self._omniparser_dir: str = ""  # OmniParser installation directory
+        self._banner_gradient: List[int] = DEFAULT_BANNER_GRADIENT.copy()
         self._loaded = False
 
     @property
@@ -213,6 +232,13 @@ class SettingsManager:
             self._project_dir = self._config.get("project_dir", "")
             self._omniparser_dir = self._config.get("omniparser_dir", "")
 
+            # Parse banner gradient
+            gradient = self._config.get("banner_gradient")
+            if isinstance(gradient, list) and len(gradient) == 6:
+                self._banner_gradient = gradient
+            else:
+                self._banner_gradient = DEFAULT_BANNER_GRADIENT.copy()
+
             self._active_profile = self._config.get("active_profile", "local")
             self._loaded = True
             return True
@@ -249,6 +275,7 @@ class SettingsManager:
                     pair.to_dict() for pair in self._steam_account_pairs
                 ],
                 "steam_login_timeout": self._steam_login_timeout,
+                "banner_gradient": self._banner_gradient,
                 "active_profile": self._active_profile,
             }
 
@@ -362,20 +389,40 @@ class SettingsManager:
         return ",".join(enabled) if enabled else ""
 
     def get_project_dir(self) -> str:
-        """Get the project base directory"""
-        return self._project_dir
+        """Get the project base directory, auto-detecting if empty."""
+        if self._project_dir:
+            return self._project_dir
+        from .config import detect_project_dir
+        detected = detect_project_dir()
+        return str(detected) if detected else ""
 
     def set_project_dir(self, path: str):
         """Set the project base directory"""
         self._project_dir = path
 
     def get_omniparser_dir(self) -> str:
-        """Get the OmniParser installation directory"""
-        return self._omniparser_dir
+        """Get the OmniParser installation directory, deriving from project_dir if empty."""
+        if self._omniparser_dir:
+            return self._omniparser_dir
+        project = self.get_project_dir()
+        if project:
+            derived = Path(project) / "omniparser-server" / "omnitool" / "omniparserserver"
+            if derived.exists():
+                return str(derived)
+        return ""
 
     def set_omniparser_dir(self, path: str):
         """Set the OmniParser installation directory"""
         self._omniparser_dir = path
+
+    def get_banner_gradient(self) -> List[int]:
+        """Get the banner gradient colors (list of 6 ANSI 256-color codes)."""
+        return self._banner_gradient.copy()
+
+    def set_banner_gradient(self, colors: List[int]):
+        """Set the banner gradient colors (list of 6 ANSI 256-color codes)."""
+        if isinstance(colors, list) and len(colors) == 6:
+            self._banner_gradient = [max(0, min(255, c)) for c in colors]
 
     def get_steam_account_pairs(self) -> List[SteamAccountPair]:
         """Get all configured Steam account pairs"""

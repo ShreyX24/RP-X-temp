@@ -7,6 +7,7 @@ Game launch and input automation for Raptor X platform
 import argparse
 import sys
 import logging
+from pathlib import Path
 
 __version__ = "0.3.0"
 __author__ = "RPX Team"
@@ -31,8 +32,27 @@ RPX_BANNER_ASCII = [
 ]
 
 # ANSI 256-color gradient: purple (93) -> light purple -> white (231)
-GRADIENT_COLORS = [93, 135, 141, 183, 189, 231]
+DEFAULT_GRADIENT_COLORS = [93, 135, 141, 183, 189, 231]
+GRADIENT_COLORS = DEFAULT_GRADIENT_COLORS.copy()
 RESET = "\033[0m"
+
+# Branding cache path
+_BRANDING_CACHE = Path.home() / ".rpx" / "sut_branding.json"
+
+
+def _load_cached_branding():
+    """Load cached branding gradient from disk, updating GRADIENT_COLORS if found."""
+    global GRADIENT_COLORS
+    try:
+        if _BRANDING_CACHE.exists():
+            import json
+            with open(_BRANDING_CACHE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            gradient = data.get("banner_gradient")
+            if isinstance(gradient, list) and len(gradient) == 6:
+                GRADIENT_COLORS = gradient
+    except Exception:
+        pass
 
 
 def _enable_windows_ansi():
@@ -55,11 +75,15 @@ def _enable_windows_ansi():
 
 
 def print_banner(version: str):
-    """Print the RAPTOR X banner with purple-to-white gradient.
+    """Print the RAPTOR X banner with gradient colors.
 
     Uses block-character banner by default, falls back to plain ASCII
     if the terminal encoding doesn't support Unicode.
+    Loads cached branding from master server if available.
     """
+    # Load cached branding (updates GRADIENT_COLORS if cache exists)
+    _load_cached_branding()
+
     # Enable ANSI colors on Windows
     _enable_windows_ansi()
 

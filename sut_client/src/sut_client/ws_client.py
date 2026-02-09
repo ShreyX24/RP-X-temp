@@ -161,6 +161,9 @@ class WebSocketClient:
 
                     logger.info(f"[CONNECTED] Registered with Master at {self.master_ip}:{self.master_port}")
 
+                    # Fetch branding from discovery service in background
+                    asyncio.ensure_future(self._fetch_branding())
+
                     # Handle bidirectional SSH: Install Master's public key if provided
                     await self._handle_master_key_exchange(ws, response)
 
@@ -183,6 +186,33 @@ class WebSocketClient:
                     delay = self._get_reconnect_delay()
                     logger.error(f"Error: {e}, reconnecting in {delay:.1f}s...")
                     await asyncio.sleep(delay)
+
+    async def _fetch_branding(self):
+        """Fetch banner branding from discovery service and cache locally."""
+        try:
+            import urllib.request
+            from pathlib import Path
+
+            url = f"http://{self.master_ip}:{self.master_port}/api/branding"
+            req = urllib.request.Request(url, method="GET")
+            req.add_header("Accept", "application/json")
+
+            loop = asyncio.get_running_loop()
+            response_data = await loop.run_in_executor(
+                None, lambda: urllib.request.urlopen(req, timeout=5).read()
+            )
+
+            data = json.loads(response_data)
+            gradient = data.get("banner_gradient")
+            if isinstance(gradient, list) and len(gradient) == 6:
+                cache_dir = Path.home() / ".rpx"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file = cache_dir / "sut_branding.json"
+                with open(cache_file, "w", encoding="utf-8") as f:
+                    json.dump({"banner_gradient": gradient}, f)
+                logger.info(f"Cached branding gradient: {gradient}")
+        except Exception as e:
+            logger.debug(f"Could not fetch branding: {e}")
 
     async def _handle_master_key_exchange(self, ws, response: Dict[str, Any]):
         """

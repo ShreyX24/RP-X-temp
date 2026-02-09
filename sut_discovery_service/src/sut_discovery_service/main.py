@@ -16,7 +16,7 @@ import uvicorn
 from .config import get_config, set_config, DiscoveryServiceConfig
 from .discovery import get_device_registry, get_ws_manager, UDPAnnouncer
 from .utils import NetworkDiscovery
-from .api import suts_router, proxy_router, health_router
+from .api import suts_router, proxy_router, health_router, branding_router
 
 # Configure logging
 logging.basicConfig(
@@ -110,6 +110,7 @@ app.add_middleware(
 app.include_router(suts_router, prefix="/api")
 app.include_router(proxy_router, prefix="/api")
 app.include_router(health_router)
+app.include_router(branding_router, prefix="/api")
 
 
 def _ensure_firewall_rule(port: int, protocol: str = "tcp",

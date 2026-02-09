@@ -6,33 +6,49 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, List
 
-# Default paths (used if settings not configured)
-_DEFAULT_BASE_DIR = Path("C:/Users/shrey/OneDrive/Documents/Code/Gemma/RPX")
-_DEFAULT_OMNIPARSER_DIR = Path("C:/Users/shrey/OneDrive/Documents/Code/Gemma/RPX/omniparser-server/omnitool/omniparserserver")
-
 # OmniParser configuration
 OMNIPARSER_BASE_PORT = 8000
 OMNIPARSER_MAX_INSTANCES = 5
 
 
+def detect_project_dir() -> Optional[Path]:
+    """Auto-detect the project root by walking up from this file looking for .git + rpx-core."""
+    current = Path(__file__).resolve().parent
+    for _ in range(10):
+        if (current / ".git").exists() and (current / "rpx-core").exists():
+            return current
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return None
+
+
 def get_base_dir() -> Path:
-    """Get the project base directory from settings or default"""
+    """Get the project base directory from settings, auto-detection, or fallback."""
     from .settings import get_settings_manager
     settings = get_settings_manager()
     project_dir = settings.get_project_dir()
     if project_dir:
         return Path(project_dir)
-    return _DEFAULT_BASE_DIR
+    detected = detect_project_dir()
+    if detected:
+        return detected
+    return Path.cwd()
 
 
 def get_omniparser_dir() -> Path:
-    """Get the OmniParser directory from settings or default"""
+    """Get the OmniParser directory from settings, derivation from base_dir, or fallback."""
     from .settings import get_settings_manager
     settings = get_settings_manager()
     omni_dir = settings.get_omniparser_dir()
     if omni_dir:
         return Path(omni_dir)
-    return _DEFAULT_OMNIPARSER_DIR
+    base = get_base_dir()
+    derived = base / "omniparser-server" / "omnitool" / "omniparserserver"
+    if derived.exists():
+        return derived
+    return base / "omniparser-server" / "omnitool" / "omniparserserver"
 
 
 @dataclass

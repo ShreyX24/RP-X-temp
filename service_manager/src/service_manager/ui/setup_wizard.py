@@ -255,5 +255,16 @@ class SetupWizard(QWizard):
             settings_manager.create_default_config(get_services())
             settings_manager.apply_wizard_config(config_page.get_settings())
 
+        # Auto-detect and save paths if not already set
+        from ..config import detect_project_dir
+        if not settings_manager.get_project_dir():
+            detected = detect_project_dir()
+            if detected:
+                settings_manager.set_project_dir(str(detected))
+                # Also derive OmniParser dir
+                omni = detected / "omniparser-server" / "omnitool" / "omniparserserver"
+                if omni.exists():
+                    settings_manager.set_omniparser_dir(str(omni))
+
         settings_manager.save()
         super().accept()
