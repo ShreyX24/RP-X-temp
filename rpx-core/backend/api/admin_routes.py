@@ -447,10 +447,12 @@ def update_game_yaml(name: str):
     """Update YAML content for a game"""
     try:
         data = request.get_json()
-        if not data or 'content' not in data:
+        if not data:
             return jsonify({"error": "No content provided"}), 400
 
-        content = data['content']
+        content = data.get('content') or data.get('yaml')
+        if not content:
+            return jsonify({"error": "No content provided (expected 'content' or 'yaml' key)"}), 400
 
         # Validate YAML syntax
         try:
@@ -487,7 +489,7 @@ def create_game():
             return jsonify({"error": "No data provided"}), 400
 
         name = data.get('name')
-        content = data.get('content')
+        content = data.get('content') or data.get('yaml')
 
         if not name:
             return jsonify({"error": "Game name required"}), 400

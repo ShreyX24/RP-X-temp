@@ -492,9 +492,10 @@ export async function saveWorkflowYaml(gameName: string, yaml: string): Promise<
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: response.statusText }));
+    const details = error.details ? ` (${error.details.join(', ')})` : '';
     throw new WorkflowBuilderError(
       response.status,
-      error.error || error.details?.join(', ') || 'Failed to save workflow'
+      (error.error || 'Failed to save workflow') + details
     );
   }
 

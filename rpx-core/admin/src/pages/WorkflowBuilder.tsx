@@ -136,6 +136,9 @@ interface DraftStep {
   // Sideload script (runs after step action)
   sideload?: SideloadConfig;
   useSideload: boolean; // Toggle to enable sideload for this step
+  // Verify success (check expected screen state after action)
+  useVerify: boolean;
+  verifyElements: Array<{ type: 'icon' | 'text' | 'any'; text: string; textMatch: string }>;
 }
 
 // Screenshot canvas with bounding box overlay - 16:9 aspect ratio, fit-to-container zoom
@@ -276,6 +279,8 @@ function StepEditor({
   isParsing,
   onReparseWithOcr,
   lastOcrTestResult,
+  verifyPickMode,
+  onVerifyPickModeChange,
 }: {
   draft: DraftStep;
   selectedElement: BoundingBox | null;
@@ -289,6 +294,8 @@ function StepEditor({
   isParsing: boolean;
   onReparseWithOcr: () => void;
   lastOcrTestResult: { found: boolean; elementCount: number } | null;
+  verifyPickMode: boolean;
+  onVerifyPickModeChange: (active: boolean) => void;
 }) {
   const needsElement = ['find_and_click', 'double_click', 'right_click', 'drag'].includes(draft.actionType);
 
@@ -350,9 +357,15 @@ function StepEditor({
                 }`}>
                   {draft.element.type}
                 </span>
-                <span className="text-sm text-gray-200 font-mono">
-                  "{draft.element.text}"
-                </span>
+                <input
+                  type="text"
+                  value={draft.element.text}
+                  onChange={(e) => onDraftChange({
+                    ...draft,
+                    element: { ...draft.element!, text: e.target.value },
+                  })}
+                  className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-0.5 text-sm text-gray-200 font-mono min-w-0"
+                />
                 <button
                   onClick={() => onDraftChange({ ...draft, element: null })}
                   className="text-gray-500 hover:text-gray-400"
@@ -533,6 +546,82 @@ function StepEditor({
         />
         <span className="text-sm text-gray-300">Optional step (continue if fails)</span>
       </label>
+
+      {/* Verify Success (check expected screen state after action) */}
+      <div className="p-2 bg-gray-800/30 rounded border border-gray-700">
+        <label className="flex items-center gap-2 cursor-pointer mb-2">
+          <input
+            type="checkbox"
+            checked={draft.useVerify}
+            onChange={(e) => {
+              if (!e.target.checked) onVerifyPickModeChange(false);
+              onDraftChange({
+                ...draft,
+                useVerify: e.target.checked,
+                verifyElements: e.target.checked ? draft.verifyElements : [],
+              });
+            }}
+            className="rounded border-gray-600 bg-gray-700 text-cyan-500"
+          />
+          <span className="text-xs text-gray-400">Verify after action (check expected screen state)</span>
+        </label>
+
+        {draft.useVerify && (
+          <div className="space-y-2 pl-4 border-l-2 border-cyan-500/30">
+            {draft.verifyElements.map((ve, idx) => (
+              <div key={idx} className="flex items-center gap-2 p-1.5 bg-gray-800/50 rounded border border-gray-700">
+                <span className={`px-1.5 py-0.5 rounded text-[10px] flex-shrink-0 ${
+                  ve.type === 'icon' ? 'bg-blue-900/50 text-blue-400' : ve.type === 'text' ? 'bg-emerald-900/50 text-emerald-400' : 'bg-gray-700 text-gray-400'
+                }`}>
+                  {ve.type}
+                </span>
+                <input
+                  type="text"
+                  value={ve.text}
+                  onChange={(e) => {
+                    const updated = [...draft.verifyElements];
+                    updated[idx] = { ...updated[idx], text: e.target.value };
+                    onDraftChange({ ...draft, verifyElements: updated });
+                  }}
+                  className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-0.5 text-xs text-gray-200 font-mono min-w-0"
+                />
+                <select
+                  value={ve.textMatch}
+                  onChange={(e) => {
+                    const updated = [...draft.verifyElements];
+                    updated[idx] = { ...updated[idx], textMatch: e.target.value };
+                    onDraftChange({ ...draft, verifyElements: updated });
+                  }}
+                  className="bg-gray-700 border border-gray-600 rounded px-1 py-0.5 text-[10px] text-gray-200"
+                >
+                  {TEXT_MATCH_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => {
+                    const updated = draft.verifyElements.filter((_, i) => i !== idx);
+                    onDraftChange({ ...draft, verifyElements: updated });
+                  }}
+                  className="text-red-500 hover:text-red-400 text-xs flex-shrink-0"
+                >
+                  x
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => onVerifyPickModeChange(!verifyPickMode)}
+              className={`w-full px-2 py-1 text-xs rounded flex items-center justify-center gap-1 transition-colors ${
+                verifyPickMode
+                  ? 'bg-cyan-600 text-white border border-cyan-400 animate-pulse'
+                  : 'bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/30 text-cyan-400'
+              }`}
+            >
+              {verifyPickMode ? 'Click an element on the screenshot...' : '+ Pick from Screenshot'}
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Per-Step OCR Config (only for click actions that need element detection) */}
       {needsElement && (
@@ -841,10 +930,15 @@ function StepsList({
               <div className={`text-sm truncate ${isSelected ? 'text-blue-200' : 'text-gray-200'}`}>
                 {step.description || `Step ${index + 1}`}
               </div>
-              <div className="text-xs text-gray-500">
-                {step.action_type}
-                {step.optional && ' (optional)'}
-                {step.find?.text && ` → "${step.find.text}"`}
+              <div className="text-xs text-gray-500 flex items-center gap-1">
+                <span>{step.action_type}</span>
+                {step.optional && <span>(optional)</span>}
+                {step.find?.text && <span className="truncate">{`→ "${step.find.text}"`}</span>}
+                {step.verify_success && step.verify_success.length > 0 && (
+                  <span className="px-1 py-0 rounded bg-cyan-900/40 text-cyan-400 text-[10px]" title={`Verify: ${step.verify_success.map(v => v.text).join(', ')}`}>
+                    verify
+                  </span>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
@@ -1450,6 +1544,8 @@ export function WorkflowBuilder() {
     description: '',
     useCustomOcr: false,
     useSideload: false,
+    useVerify: false,
+    verifyElements: [],
   });
   const [selectedStepIndex, setSelectedStepIndex] = useState<number | null>(null);
   const [isTestingStep, setIsTestingStep] = useState<number | null>(null);
@@ -1490,6 +1586,7 @@ export function WorkflowBuilder() {
   const [isKilling, setIsKilling] = useState(false);
   const [isRunningFlow, setIsRunningFlow] = useState(false);
   const [currentFlowStep, setCurrentFlowStep] = useState<number | null>(null);
+  const [verifyPickMode, setVerifyPickMode] = useState(false);
 
   // Workflow library state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -1588,6 +1685,7 @@ export function WorkflowBuilder() {
       let inAction = false;
       let inStepOcrConfig = false;
       let inStepSideload = false;
+      let inVerifySuccess = false;
 
       const parseValue = (line: string): string => {
         const colonIdx = line.indexOf(':');
@@ -1682,6 +1780,7 @@ export function WorkflowBuilder() {
             inAction = false;
             inStepOcrConfig = false;
             inStepSideload = false;
+            inVerifySuccess = false;
             continue;
           }
 
@@ -1690,6 +1789,7 @@ export function WorkflowBuilder() {
             inFind = true;
             inAction = false;
             inStepOcrConfig = false;
+            inVerifySuccess = false;
             if (currentStep) {
               currentStep.find = { type: 'any', text: '', text_match: 'contains' };
             }
@@ -1699,6 +1799,7 @@ export function WorkflowBuilder() {
             inAction = true;
             inFind = false;
             inStepOcrConfig = false;
+            inVerifySuccess = false;
             if (currentStep && !currentStep.action) {
               currentStep.action = { type: 'click' };
             }
@@ -1709,6 +1810,7 @@ export function WorkflowBuilder() {
             inAction = false;
             inFind = false;
             inStepSideload = false;
+            inVerifySuccess = false;
             if (currentStep) {
               currentStep.ocr_config = {};
             }
@@ -1719,8 +1821,20 @@ export function WorkflowBuilder() {
             inAction = false;
             inFind = false;
             inStepOcrConfig = false;
+            inVerifySuccess = false;
             if (currentStep) {
               currentStep.sideload = { path: '', timeout: 60, wait_for_completion: true };
+            }
+            continue;
+          }
+          if (trimmed === 'verify_success:') {
+            inVerifySuccess = true;
+            inAction = false;
+            inFind = false;
+            inStepOcrConfig = false;
+            inStepSideload = false;
+            if (currentStep) {
+              currentStep.verify_success = [];
             }
             continue;
           }
@@ -1790,6 +1904,23 @@ export function WorkflowBuilder() {
                   case 'wait_for_completion':
                     currentStep.sideload.wait_for_completion = value === 'true';
                     break;
+                }
+              } else if (inVerifySuccess && currentStep.verify_success) {
+                // Parse verify_success list items
+                // "- type: any" starts a new entry
+                if (trimmed.startsWith('- type:')) {
+                  const typeVal = trimmed.slice(trimmed.indexOf(':') + 1).trim().replace(/["']/g, '');
+                  currentStep.verify_success.push({
+                    type: typeVal as 'icon' | 'text' | 'any',
+                    text: '',
+                    text_match: 'contains',
+                  });
+                } else if (currentStep.verify_success.length > 0) {
+                  const lastV = currentStep.verify_success[currentStep.verify_success.length - 1];
+                  switch (key) {
+                    case 'text': lastV.text = value; break;
+                    case 'text_match': lastV.text_match = value as 'contains' | 'exact' | 'startswith' | 'endswith'; break;
+                  }
                 }
               } else {
                 // Top-level step fields
@@ -1873,7 +2004,7 @@ export function WorkflowBuilder() {
     yaml += `  version: '${metadata.version || '1.0'}'\n`;
     yaml += `  created_with: Raptor X Workflow Builder\n`;
     yaml += `  created_date: '${dateStr}'\n`;
-    if (metadata.path) yaml += `  path: '${metadata.path}'\n`;
+    if (metadata.path) yaml += `  path: ${escapeYamlString(metadata.path)}\n`;
     yaml += `  process_id: ${metadata.process_id}\n`;
     if (metadata.process_name) yaml += `  process_name: ${metadata.process_name}\n`;
     if (metadata.game_process) yaml += `  game_process: ${metadata.game_process}\n`;
@@ -1898,7 +2029,7 @@ export function WorkflowBuilder() {
         yaml += `  agents: [${metadata.tracing.agents.join(', ')}]\n`;
       }
       if (metadata.tracing.output_dir) {
-        yaml += `  output_dir: '${metadata.tracing.output_dir}'\n`;
+        yaml += `  output_dir: ${escapeYamlString(metadata.tracing.output_dir)}\n`;
       }
     }
 
@@ -1908,7 +2039,7 @@ export function WorkflowBuilder() {
       if (metadata.hooks.pre?.length) {
         yaml += `  pre:\n`;
         metadata.hooks.pre.forEach((hook) => {
-          yaml += `    - path: '${hook.path}'\n`;
+          yaml += `    - path: ${escapeYamlString(hook.path)}\n`;
           if (hook.args?.length) {
             yaml += `      args: [${hook.args.map(a => `"${a}"`).join(', ')}]\n`;
           }
@@ -1926,7 +2057,7 @@ export function WorkflowBuilder() {
       if (metadata.hooks.post?.length) {
         yaml += `  post:\n`;
         metadata.hooks.post.forEach((hook) => {
-          yaml += `    - path: '${hook.path}'\n`;
+          yaml += `    - path: ${escapeYamlString(hook.path)}\n`;
           if (hook.args?.length) {
             yaml += `      args: [${hook.args.map(a => `"${a}"`).join(', ')}]\n`;
           }
@@ -1995,7 +2126,7 @@ export function WorkflowBuilder() {
       // Per-step sideload script
       if (step.sideload?.path) {
         yaml += `    sideload:\n`;
-        yaml += `      path: '${step.sideload.path}'\n`;
+        yaml += `      path: ${escapeYamlString(step.sideload.path)}\n`;
         if (step.sideload.args?.length) {
           yaml += `      args: [${step.sideload.args.map(a => `"${a}"`).join(', ')}]\n`;
         }
@@ -2005,6 +2136,16 @@ export function WorkflowBuilder() {
         if (step.sideload.wait_for_completion === false) {
           yaml += `      wait_for_completion: false\n`;
         }
+      }
+
+      // Verify success conditions
+      if (step.verify_success && step.verify_success.length > 0) {
+        yaml += `    verify_success:\n`;
+        step.verify_success.forEach(v => {
+          yaml += `      - type: ${escapeYamlString(v.type)}\n`;
+          yaml += `        text: ${escapeYamlString(v.text)}\n`;
+          yaml += `        text_match: ${escapeYamlString(v.text_match)}\n`;
+        });
       }
 
       yaml += `\n`;
@@ -2027,10 +2168,12 @@ export function WorkflowBuilder() {
     try {
       setIsSaving(true);
       const yaml = generateYaml();
+      console.log('[handleSave] Saving YAML for:', currentWorkflow, '\n', yaml);
       await saveWorkflowYaml(currentWorkflow, yaml);
       setInitialYaml(yaml);
       setHasUnsavedChanges(false);
     } catch (err) {
+      console.error('[handleSave] Save failed:', err);
       alert(`Failed to save: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsSaving(false);
@@ -2112,7 +2255,25 @@ export function WorkflowBuilder() {
   // Handle element click
   const handleElementClick = useCallback((element: BoundingBox) => {
     selectElement(element);
-    // Auto-populate draft
+
+    if (verifyPickMode) {
+      // In verify pick mode: append to verify list instead of target
+      setDraft(prev => ({
+        ...prev,
+        verifyElements: [
+          ...prev.verifyElements,
+          {
+            type: element.element_type,
+            text: element.element_text,
+            textMatch: 'contains',
+          },
+        ],
+      }));
+      setVerifyPickMode(false);
+      return;
+    }
+
+    // Normal mode: auto-populate draft target
     setDraft(prev => ({
       ...prev,
       element: {
@@ -2120,9 +2281,9 @@ export function WorkflowBuilder() {
         text: element.element_text,
         textMatch: 'contains',
       },
-      description: `Click "${element.element_text}"`,
+      description: prev.description || `Click "${element.element_text}"`,
     }));
-  }, [selectElement]);
+  }, [selectElement, verifyPickMode]);
 
   // Add step to workflow
   const handleAddStep = useCallback(() => {
@@ -2180,6 +2341,15 @@ export function WorkflowBuilder() {
       };
     }
 
+    // Add verify_success if enabled
+    if (draft.useVerify && draft.verifyElements.length > 0) {
+      newStep.verify_success = draft.verifyElements.map(ve => ({
+        type: ve.type,
+        text: ve.text,
+        text_match: ve.textMatch as 'contains' | 'exact' | 'startswith' | 'endswith',
+      }));
+    }
+
     setSteps([...steps, newStep]);
 
     // Reset draft
@@ -2192,8 +2362,11 @@ export function WorkflowBuilder() {
       description: '',
       useCustomOcr: false,
       useSideload: false,
+      useVerify: false,
+      verifyElements: [],
     });
     selectElement(null);
+    setVerifyPickMode(false);
   }, [draft, steps, selectElement]);
 
   // Remove step
@@ -2224,8 +2397,11 @@ export function WorkflowBuilder() {
         description: '',
         useCustomOcr: false,
         useSideload: false,
+        useVerify: false,
+        verifyElements: [],
       });
       selectElement(null);
+      setVerifyPickMode(false);
       return;
     }
 
@@ -2238,6 +2414,7 @@ export function WorkflowBuilder() {
         step.ocr_config?.box_threshold !== undefined);
 
       const hasSideload = !!step.sideload?.path;
+      const hasVerify = !!(step.verify_success && step.verify_success.length > 0);
       setDraft({
         actionType: step.action_type,
         element: step.find ? {
@@ -2259,6 +2436,12 @@ export function WorkflowBuilder() {
         ocrConfig: hasCustomOcr ? step.ocr_config : undefined,
         useSideload: hasSideload,
         sideload: hasSideload ? step.sideload : undefined,
+        useVerify: hasVerify,
+        verifyElements: step.verify_success?.map(v => ({
+          type: v.type,
+          text: v.text,
+          textMatch: v.text_match,
+        })) ?? [],
       });
     }
   }, [steps, selectElement]);
@@ -2321,6 +2504,15 @@ export function WorkflowBuilder() {
       };
     }
 
+    // Add verify_success if enabled
+    if (draft.useVerify && draft.verifyElements.length > 0) {
+      updatedStep.verify_success = draft.verifyElements.map(ve => ({
+        type: ve.type,
+        text: ve.text,
+        text_match: ve.textMatch as 'contains' | 'exact' | 'startswith' | 'endswith',
+      }));
+    }
+
     const newSteps = [...steps];
     newSteps[selectedStepIndex] = updatedStep;
     setSteps(newSteps);
@@ -2336,8 +2528,11 @@ export function WorkflowBuilder() {
       description: '',
       useCustomOcr: false,
       useSideload: false,
+      useVerify: false,
+      verifyElements: [],
     });
     selectElement(null);
+    setVerifyPickMode(false);
   }, [selectedStepIndex, draft, steps, selectElement]);
 
   // Test existing step - uses hook's testStepWithFind for full flow
@@ -2715,6 +2910,8 @@ export function WorkflowBuilder() {
               isParsing={isParsing}
               onReparseWithOcr={handleReparseWithOcrConfig}
               lastOcrTestResult={lastOcrTestResult}
+              verifyPickMode={verifyPickMode}
+              onVerifyPickModeChange={setVerifyPickMode}
             />
           </div>
 
