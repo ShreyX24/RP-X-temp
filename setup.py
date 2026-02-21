@@ -131,8 +131,8 @@ def print_banner(pin: bool = True):
     except (UnicodeEncodeError, LookupError):
         banner = BANNER_ASCII
 
-    # Banner occupies: 1 blank + len(banner) art + 1 blank + 1 subtitle + 1 blank
-    banner_height = 1 + len(banner) + 1 + 1 + 1
+    # Banner occupies: 1 blank + len(banner) art + 1 blank + 1 subtitle + 1 authors + 1 blank
+    banner_height = 1 + len(banner) + 1 + 1 + 1 + 1
 
     if pin:
         # Clear screen and move cursor to top-left
@@ -146,9 +146,12 @@ def print_banner(pin: bool = True):
             print(f"{Colors.fg256(c)}{line}{RESET}")
         except UnicodeEncodeError:
             print(f"{Colors.fg256(c)}{line.encode('ascii', 'replace').decode()}{RESET}")
-    subtitle = "Setup Script"
-    pad = max(0, (len(banner[0]) - len(subtitle)) // 2)
-    print(f"\n\033[97m{' ' * pad}{subtitle}{RESET}")
+    subtitle = "Installer"
+    authors = "by Satya (bhuyansa) & Shrey (shreyan1)"
+    pad_sub = max(0, (len(banner[0]) - len(subtitle)) // 2)
+    pad_auth = max(0, (len(banner[0]) - len(authors)) // 2)
+    print(f"\n\033[97m{' ' * pad_sub}{subtitle}{RESET}")
+    print(f"\033[90m{' ' * pad_auth}{authors}{RESET}")
     print()
 
     if pin:
@@ -336,6 +339,124 @@ def get_npm_cmd() -> list:
     return ["npm"]
 
 
+# ── Interactive Selector ─────────────────────────────────────────────────────
+
+def _read_key():
+    """Read a single keypress. Returns 'up', 'down', 'enter', or 'other'."""
+    if sys.platform == "win32":
+        import msvcrt
+        key = msvcrt.getch()
+        if key in (b'\xe0', b'\x00'):
+            key2 = msvcrt.getch()
+            if key2 == b'H':
+                return 'up'
+            if key2 == b'P':
+                return 'down'
+            return 'other'
+        if key == b'\r':
+            return 'enter'
+        if key == b' ':
+            return 'enter'
+        return 'other'
+    else:
+        import tty
+        import termios
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            if ch == '\x1b':
+                ch2 = sys.stdin.read(1)
+                if ch2 == '[':
+                    ch3 = sys.stdin.read(1)
+                    if ch3 == 'A':
+                        return 'up'
+                    if ch3 == 'B':
+                        return 'down'
+                return 'other'
+            if ch in ('\r', '\n', ' '):
+                return 'enter'
+            return 'other'
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def interactive_select(prompt, options, default=0):
+    """Vite-style interactive option selector with arrow-key navigation.
+
+    Args:
+        prompt: Question text to display.
+        options: List of (label, hint) tuples. Hint can be empty string.
+        default: Index of initially selected option.
+
+    Returns:
+        Selected index (0-based).
+    """
+    # Fallback for non-interactive terminals (piped stdin)
+    if not sys.stdin.isatty():
+        print(f"\n  \033[96m?\033[0m {Colors.bold(prompt)}")
+        for i, (label, hint) in enumerate(options):
+            d = " (default)" if i == default else ""
+            h = f" - {hint}" if hint else ""
+            print(f"    [{i + 1}] {label}{h}{d}")
+        return default
+
+    selected = default
+    n = len(options)
+
+    # Prompt line with navigation hint
+    sys.stdout.write(
+        f"\n  \033[96m?\033[0m \033[1m{prompt}\033[0m"
+        f"  \033[90m(arrow keys to move, enter to confirm)\033[0m\n"
+    )
+    # Hide cursor
+    sys.stdout.write("\033[?25l")
+    sys.stdout.flush()
+
+    try:
+        while True:
+            # Draw options
+            for i, (label, hint) in enumerate(options):
+                if i == selected:
+                    sys.stdout.write(f"  \033[96m>\033[0m \033[96m{label}\033[0m")
+                    if hint:
+                        sys.stdout.write(f"  \033[90m{hint}\033[0m")
+                else:
+                    sys.stdout.write(f"    \033[90m{label}\033[0m")
+                sys.stdout.write("\033[K\n")
+            sys.stdout.flush()
+
+            key = _read_key()
+            if key == 'enter':
+                break
+            elif key == 'up':
+                selected = (selected - 1) % n
+            elif key == 'down':
+                selected = (selected + 1) % n
+
+            # Move cursor back up to redraw options
+            sys.stdout.write(f"\033[{n}A")
+            sys.stdout.flush()
+
+        # Collapse: replace prompt + options with single confirmed line
+        sys.stdout.write(f"\033[{n + 1}A\r")
+        chosen = options[selected][0]
+        sys.stdout.write(
+            f"  \033[92m\u2713\033[0m \033[1m{prompt}\033[0m"
+            f" \033[90m\u203a\033[0m \033[96m{chosen}\033[0m\033[K\n"
+        )
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
+
+    finally:
+        # Show cursor
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
+
+    return selected
+
+
 # ── GitManager ───────────────────────────────────────────────────────────────
 
 class GitManager:
@@ -398,22 +519,16 @@ class GitManager:
             warn("No remote branches found")
             return False
 
-        print()
-        print("  Available branches (sorted by most recent):")
-        for i, (name, date) in enumerate(branches[:9], 1):
-            print(f"    [{i}] {name}  {Colors.dim(f'({date})')}")
+        shown = branches[:9]
         if len(branches) > 9:
-            print(f"    ... and {len(branches)} total branches (showing top 9)")
+            print(f"\n  {Colors.dim(f'Showing top 9 of {len(branches)} branches (sorted by most recent)')}")
 
-        choice_str = input(f"\n  Select branch number [1]: ").strip() or "1"
-        try:
-            idx = int(choice_str) - 1
-            if idx < 0 or idx >= len(branches):
-                raise ValueError
-        except ValueError:
-            warn("Invalid selection, defaulting to branch 1")
-            idx = 0
+        branch_options = []
+        for name, date in shown:
+            label = f"{name}  ({date})" if date else name
+            branch_options.append((label, ""))
 
+        idx = interactive_select("Select branch", branch_options)
         branch = branches[idx][0]
         print(f"  Switching to: {Colors.bold(branch)}")
         r = run_live(
@@ -931,9 +1046,10 @@ class SettingsConfigurator:
 class RPXSetup:
     """Orchestrates all setup steps with error isolation and summary."""
 
-    def __init__(self, root: Path, install_only: bool = False):
+    def __init__(self, root: Path, install_only: bool = False, options: dict = None):
         self.root = root
         self.install_only = install_only
+        self.options = options or {}
         self.git = GitManager(root)
         self.results = []  # list of (title, passed) tuples
 
@@ -1031,24 +1147,10 @@ class RPXSetup:
         return installer.npm_install()
 
     def _do_pip(self) -> bool:
+        if self.options.get('skip_pip'):
+            ok("Skipping Python dependency installation")
+            return True
         installer = DependencyInstaller(self.root)
-
-        # Pre-check which services are already installed
-        deps = installer.check_python_deps()
-        installed_count = sum(1 for _, _, _, inst in deps if inst)
-
-        if installed_count > 0:
-            print(f"\n  {Colors.cyan(str(installed_count))}/{len(deps)} Python services already installed:")
-            for _rel, label, cli, inst in deps:
-                status = Colors.green('\u2713 installed') if inst else Colors.dim('\u2717 not installed')
-                print(f"    {status}  {label} ({Colors.dim(cli)})")
-
-            print(f"\n  {Colors.yellow('Note:')} Reinstalling is recommended to keep versions current.")
-            choice = input(f"  [R]einstall all (recommended) / [S]kip? [R]: ").strip().lower() or 'r'
-            if choice == 's':
-                ok("Skipping Python dependency installation")
-                return True
-
         return installer.pip_install()
 
     def _do_ssh(self) -> bool:
@@ -1056,10 +1158,7 @@ class RPXSetup:
         return ssh.run()
 
     def _do_omni_deps(self) -> bool:
-        print("  OmniParser requires Python 3.12 + CUDA 12.8 + PyTorch 2.8.0")
-        print("  It will install ~2 GB of dependencies + flash-attention wheel.")
-        choice = input("  Install OmniParser dependencies? (y/n) [n]: ").strip().lower()
-        if choice != "y":
+        if not self.options.get('install_omni'):
             ok("Skipping OmniParser dependencies")
             return True
         install_bat = self.root / "omniparser-server" / "install.bat"
@@ -1103,31 +1202,67 @@ class RPXSetup:
 # ── Entrypoint ───────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="RPX Setup Script")
+    parser = argparse.ArgumentParser(description="RPX Installer")
     parser.add_argument("--skip-clone", "--install-only", "-s",
                         dest="install_only", action="store_true",
                         help="Skip git operations, install dependencies only")
     args = parser.parse_args()
 
     Colors.enable()
+    print_banner()
 
-    install_only = args.install_only
-    banner_printed = False
+    # ── Phase 1: Collect all options upfront (vite-style) ─────────────
 
-    if not install_only:
-        print_banner()
-        banner_printed = True
-        print("  Select setup mode:")
-        print(f"    {Colors.cyan('[1]')} Full setup (clone/update + install)")
-        print(f"    {Colors.cyan('[2]')} Install only (skip git operations)")
-        print()
-        choice = input("  Enter choice (1 or 2) [1]: ").strip() or "1"
-        if choice == "2":
-            install_only = True
+    options = {}
+
+    if args.install_only:
+        options['install_only'] = True
+    else:
+        mode = interactive_select("Setup mode", [
+            ("Full setup", "clone, update, and install everything"),
+            ("Install only", "skip git operations, install deps only"),
+        ])
+        options['install_only'] = (mode == 1)
+
+    pip_action = interactive_select("Python service installation", [
+        ("Install / Reinstall", "recommended to keep versions current"),
+        ("Skip", "keep existing installations"),
+    ])
+    options['skip_pip'] = (pip_action == 1)
+
+    omni = interactive_select("Install OmniParser dependencies?", [
+        ("No", "skip OmniParser (~2 GB download)"),
+        ("Yes", "requires Python 3.12 + CUDA 12.8"),
+    ])
+    options['install_omni'] = (omni == 1)
+
+    # ── Phase 2: Show summary and confirm ─────────────────────────────
+
+    mode_label = "Install only" if options['install_only'] else "Full setup"
+    pip_label = "Skip" if options['skip_pip'] else "Install / Reinstall"
+    omni_label = "Yes" if options['install_omni'] else "No"
+
+    print(f"\n  {Colors.bold('Your selections:')}")
+    print(f"    Setup mode     {Colors.cyan(mode_label)}")
+    print(f"    Python deps    {Colors.cyan(pip_label)}")
+    print(f"    OmniParser     {Colors.cyan(omni_label)}")
+
+    confirm = interactive_select("Proceed with installation?", [
+        ("Yes, let's go!", ""),
+        ("No, abort", ""),
+    ])
+
+    if confirm == 1:
+        print(f"\n  {Colors.yellow('Installation cancelled.')}")
+        sys.exit(0)
+
+    # ── Phase 3: Tagline + execute ────────────────────────────────────
+
+    print(f"\n  {Colors.fg256(141)}Releasing the raptors... still faster than Windows Update.{RESET}\n")
 
     root = Path.cwd()
-    setup = RPXSetup(root, install_only=install_only)
-    setup.run(banner_printed=banner_printed)
+    setup = RPXSetup(root, install_only=options['install_only'], options=options)
+    setup.run(banner_printed=True)
 
 
 if __name__ == "__main__":
