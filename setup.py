@@ -1264,6 +1264,8 @@ def main():
     setup = RPXSetup(root, install_only=options['install_only'], options=options)
     setup.run(banner_printed=True)
 
+    input(f"\n  {Colors.dim('Press Enter to exit...')}")
+
 
 if __name__ == "__main__":
     main()

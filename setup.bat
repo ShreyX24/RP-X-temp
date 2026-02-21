@@ -34,11 +34,9 @@ if errorlevel 1 (
 
 where wt.exe >nul 2>&1
 if not errorlevel 1 (
-    wt.exe --title "Raptor X" -d "%~dp0" -- cmd /c "python setup.py %* & echo. & pause"
+    wt.exe --title "Raptor X" -d "%~dp0." -- python setup.py %*
     exit /b
 )
 
 :: Fallback: run in current cmd window
 python "%~dp0setup.py" %*
-echo.
-pause
