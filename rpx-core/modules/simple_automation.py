@@ -83,6 +83,9 @@ class SimpleAutomation:
         self.game_name = self.config.get("metadata", {}).get("game_name", "Unknown Game")
         self.process_id = self.config.get("metadata", {}).get("process_id")
         self.process_name = self.config.get("metadata", {}).get("process_name") or self.process_id
+        # Two-PID launcher pattern: game_process is the actual game spawned by the launcher
+        self.game_process = self.config.get("metadata", {}).get("game_process")
+        self._game_process_switched = False
         self.run_dir = run_dir or f"logs/{self.game_name}"
         
         # Enhanced features
@@ -318,35 +321,87 @@ class SimpleAutomation:
 
             logger.info(f"Starting {agent_name}: {path} {' '.join(args)}")
 
-            try:
-                result = self.network.execute_command(
-                    path=path,
-                    args=args,
-                    async_exec=True  # Start and return immediately
-                )
+            # Extract executable name for health checks
+            agent_exe = os.path.basename(path)
 
-                if result.get("status") == "started":
-                    pid = result.get("pid")
-                    self.persistent_processes[agent_name] = pid
-                    logger.info(f"Started {agent_name} with PID {pid}, output: {trace_filename}")
-                    # Notify progress callback of successful tracing start
-                    if self.progress_callback and hasattr(self.progress_callback, 'on_tracing_started'):
-                        self.progress_callback.on_tracing_started(agent_name, pid, output_path)
-                else:
-                    error_msg = f"Failed to start {agent_name}: {result.get('message')}"
+            # Attempt launch (with retry on health check failure)
+            max_attempts = 2
+            launched = False
+
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    result = self.network.execute_command(
+                        path=path,
+                        args=args,
+                        async_exec=True,  # Start and return immediately
+                        interactive=True  # Launch in interactive desktop session
+                    )
+
+                    if result.get("status") == "started":
+                        pid = result.get("pid")
+                        self.persistent_processes[agent_name] = pid
+                        logger.info(f"Started {agent_name} with PID {pid}, output: {trace_filename}")
+
+                        # Post-launch health check: verify agent isn't a zombie.
+                        # Wait 10s to give the process time to accumulate CPU usage.
+                        # NOTE: proc_status == "running" is NOT a useful signal — all
+                        # alive processes have that status. The real indicator is cpu_time > 0.
+                        logger.info(f"[Health] Waiting 10s before health check for {agent_name}...")
+                        time.sleep(10)
+
+                        health = self.network.check_process_health(agent_exe)
+                        if health.get("running"):
+                            cpu_time = health.get("cpu_time", 0)
+                            proc_status = health.get("proc_status", "unknown")
+                            session_id = health.get("session_id", -1)
+                            logger.info(f"[Health] {agent_name}: cpu_time={cpu_time}s, status={proc_status}, session={session_id}")
+
+                            if cpu_time > 0:
+                                # Agent is healthy — actually consuming CPU
+                                launched = True
+                                if self.progress_callback and hasattr(self.progress_callback, 'on_tracing_started'):
+                                    self.progress_callback.on_tracing_started(agent_name, pid, output_path)
+                                break
+                            else:
+                                logger.warning(f"[Health] {agent_name} appears stuck (cpu_time=0 after 10s, status={proc_status}, session={session_id})")
+                                if attempt < max_attempts:
+                                    logger.info(f"[Health] Killing stuck {agent_name} and retrying (attempt {attempt}/{max_attempts})...")
+                                    self.network.kill_process(agent_exe)
+                                    time.sleep(2)
+                                    del self.persistent_processes[agent_name]
+                                else:
+                                    # Final attempt still stuck — keep it and warn
+                                    logger.error(f"[Health] {agent_name} stuck after {max_attempts} attempts, marking as failed")
+                                    self.network.kill_process(agent_exe)
+                                    del self.persistent_processes[agent_name]
+                                    if self.progress_callback and hasattr(self.progress_callback, 'on_tracing_error'):
+                                        self.progress_callback.on_tracing_error(agent_name, "Process stuck (zombie) - 0 CPU after 10s")
+                                    success = False
+                        else:
+                            logger.warning(f"[Health] {agent_name} not found running after launch")
+                            if attempt < max_attempts:
+                                logger.info(f"[Health] Retrying {agent_name} launch (attempt {attempt}/{max_attempts})...")
+                                time.sleep(2)
+                            else:
+                                logger.error(f"[Health] {agent_name} failed to start after {max_attempts} attempts")
+                                if self.progress_callback and hasattr(self.progress_callback, 'on_tracing_error'):
+                                    self.progress_callback.on_tracing_error(agent_name, "Process not found after launch")
+                                success = False
+                    else:
+                        error_msg = f"Failed to start {agent_name}: {result.get('message')}"
+                        logger.error(error_msg)
+                        if attempt >= max_attempts:
+                            if self.progress_callback and hasattr(self.progress_callback, 'on_tracing_error'):
+                                self.progress_callback.on_tracing_error(agent_name, error_msg)
+                            success = False
+
+                except Exception as e:
+                    error_msg = f"Error starting {agent_name}: {e}"
                     logger.error(error_msg)
-                    # Notify progress callback of tracing error
-                    if self.progress_callback and hasattr(self.progress_callback, 'on_tracing_error'):
-                        self.progress_callback.on_tracing_error(agent_name, error_msg)
-                    success = False
-
-            except Exception as e:
-                error_msg = f"Error starting {agent_name}: {e}"
-                logger.error(error_msg)
-                # Notify progress callback of tracing error
-                if self.progress_callback and hasattr(self.progress_callback, 'on_tracing_error'):
-                    self.progress_callback.on_tracing_error(agent_name, str(e))
-                success = False
+                    if attempt >= max_attempts:
+                        if self.progress_callback and hasattr(self.progress_callback, 'on_tracing_error'):
+                            self.progress_callback.on_tracing_error(agent_name, str(e))
+                        success = False
 
         return success
 
@@ -401,13 +456,35 @@ class SimpleAutomation:
 
         # Move output files for agents that write to a fixed directory
         # (e.g. PTAT writes to %USERPROFILE%\Documents\iPTAT\log, not to the trace dir)
-        # Uses cmd.exe which correctly expands %USERPROFILE% in its arguments.
+        #
+        # CRITICAL: %USERPROFILE% expands to the SUT client's user (Administrator),
+        # but tracing agents launched via schtasks /IT run as the interactive user
+        # (e.g. Local_Admin). We must resolve %USERPROFILE% to the interactive
+        # user's profile, not the SUT client's.
         trace_dir = f"{self.trace_output_dir}\\{self.run_id}"
+
+        # Query the interactive username from SUT for %USERPROFILE% resolution
+        interactive_username = None
+        try:
+            session_info = self.network.get_session_info()
+            interactive_username = session_info.get("interactive_username")
+            if interactive_username:
+                logger.info(f"[Trace] Interactive user on SUT: {interactive_username}")
+            else:
+                logger.warning("[Trace] Could not determine interactive username, %USERPROFILE% may resolve incorrectly")
+        except Exception as e:
+            logger.warning(f"[Trace] Failed to get session info: {e}")
+
         for agent_name, _pid in agents_with_duration:
             agent_config = tracing_agents.get(agent_name, {})
             fixed_dir = agent_config.get("output_fixed_dir")
             file_pattern = agent_config.get("output_file_pattern")
             if fixed_dir and file_pattern:
+                # Resolve %USERPROFILE% to the interactive user's profile
+                if "%USERPROFILE%" in fixed_dir and interactive_username:
+                    resolved_dir = fixed_dir.replace("%USERPROFILE%", f"C:\\Users\\{interactive_username}")
+                    logger.info(f"[{agent_name}] Resolved output dir: {fixed_dir} -> {resolved_dir}")
+                    fixed_dir = resolved_dir
                 try:
                     # List source directory BEFORE move to see what the agent produced
                     try:
@@ -491,6 +568,9 @@ class SimpleAutomation:
         10+ minutes for OS tracing with large ETL files. We poll for the process to exit
         rather than using a fixed buffer time.
 
+        Also detects stuck/zombie processes: if a process's CPU time hasn't increased
+        in 2 consecutive polls (~30s), it's considered stuck and force-killed.
+
         Args:
             agents: List of (agent_name, pid) tuples
             tracing_agents: Dict of tracing agent configurations
@@ -517,6 +597,11 @@ class SimpleAutomation:
         logger.info(f"Waiting for tracing agents to complete post-processing (max {max_wait_time//60} min)...")
         logger.info(f"Monitoring processes: {list(agent_processes.values())}")
 
+        # Track CPU time for stuck detection
+        last_cpu_times = {}  # agent_name -> cpu_time from last poll
+        stall_counts = {}    # agent_name -> consecutive polls with no CPU progress
+        completed_agents = set()
+
         start_time = time.time()
         elapsed = 0
         all_completed = False
@@ -528,20 +613,51 @@ class SimpleAutomation:
             elapsed = time.time() - start_time
 
         while elapsed < max_wait_time:
-            # Check if all agent processes have exited
+            # Check each agent that hasn't completed yet
             all_completed = True
-            for agent_name, process_name in agent_processes.items():
+            for agent_name, process_name in list(agent_processes.items()):
+                if agent_name in completed_agents:
+                    continue
+
                 try:
-                    is_running = self.network.check_process(process_name)
-                    if is_running:
-                        all_completed = False
-                        logger.debug(f"{agent_name} ({process_name}) still running...")
-                    else:
+                    health = self.network.check_process_health(process_name)
+
+                    if not health.get("running"):
                         logger.info(f"{agent_name} ({process_name}) has completed")
+                        completed_agents.add(agent_name)
+                        continue
+
+                    # Process still running — check for stuck/zombie
+                    all_completed = False
+                    cpu_time = health.get("cpu_time", 0)
+                    proc_status = health.get("proc_status", "unknown")
+                    prev_cpu = last_cpu_times.get(agent_name, -1)
+
+                    if prev_cpu >= 0 and cpu_time <= prev_cpu:
+                        # CPU time hasn't increased since last poll
+                        stall_counts[agent_name] = stall_counts.get(agent_name, 0) + 1
+                        logger.debug(f"[Stuck] {agent_name} cpu_time unchanged ({cpu_time}s) for {stall_counts[agent_name]} polls")
+
+                        if stall_counts[agent_name] >= 2:
+                            # Stuck for 2+ consecutive polls (~30s) — force kill
+                            logger.warning(f"[Stuck] {agent_name} stuck (cpu_time={cpu_time}s unchanged for {stall_counts[agent_name]} polls). Force-killing.")
+                            self.network.kill_process(process_name)
+                            completed_agents.add(agent_name)
+                            continue
+                    else:
+                        # CPU time increased — reset stall counter
+                        stall_counts[agent_name] = 0
+
+                    last_cpu_times[agent_name] = cpu_time
+                    logger.debug(f"{agent_name} ({process_name}) still running (cpu={cpu_time}s, status={proc_status})")
+
                 except Exception as e:
                     logger.warning(f"Error checking {agent_name} process: {e}")
                     # Assume still running on error
                     all_completed = False
+
+            if len(completed_agents) == len(agent_processes):
+                all_completed = True
 
             if all_completed:
                 logger.info(f"All tracing agents completed post-processing in {int(elapsed)}s")
@@ -550,14 +666,24 @@ class SimpleAutomation:
             # Log progress every minute
             if int(elapsed) % 60 == 0 and elapsed > 0:
                 remaining = max_wait_time - elapsed
-                logger.info(f"Still waiting for tracing post-processing... ({int(elapsed)}s elapsed, {int(remaining)}s remaining)")
+                still_running = [n for n in agent_processes if n not in completed_agents]
+                logger.info(f"Still waiting for tracing post-processing... ({int(elapsed)}s elapsed, {int(remaining)}s remaining, waiting on: {still_running})")
 
             time.sleep(poll_interval)
             elapsed = time.time() - start_time
 
         if not all_completed:
+            # Force-kill all remaining agent processes on timeout
+            still_running = [n for n in agent_processes if n not in completed_agents]
             logger.warning(f"Tracing post-processing timed out after {max_wait_time//60} minutes")
-            logger.warning("Some trace files may be incomplete. Consider increasing max_wait_time or using lighter tracing features.")
+            logger.warning(f"Force-killing remaining agents: {still_running}")
+            for agent_name in still_running:
+                process_name = agent_processes[agent_name]
+                try:
+                    self.network.kill_process(process_name)
+                    logger.warning(f"Force-killed {agent_name} ({process_name})")
+                except Exception as e:
+                    logger.error(f"Failed to force-kill {agent_name}: {e}")
         else:
             # Give a small buffer for file system sync
             logger.info("Waiting 5s for file system sync...")
@@ -1007,6 +1133,9 @@ class SimpleAutomation:
                     target_text = step.get("find", {}).get("text", "")
                     if isinstance(target_text, list):
                         target_text = target_text[0] if target_text else ""
+                    # YAML parses unquoted Yes/No/On/Off as booleans - coerce to string
+                    if not isinstance(target_text, str):
+                        target_text = str(target_text)
 
                     # Try with fallback if enabled and we have a target
                     if self.use_ocr_fallback and target_text and hasattr(self.vision_model, 'detect_ui_elements_with_fallback'):
@@ -1081,6 +1210,27 @@ class SimpleAutomation:
 
                 current_step += 1
                 retries = 0
+
+                # Two-PID launcher pattern: check if game_process has spawned
+                # (e.g., FFXIV launcher spawns ffxiv_dx11.exe after clicking Start)
+                if self.game_process and not self._game_process_switched:
+                    try:
+                        if self.network.check_process(self.game_process):
+                            logger.info(f"Game process '{self.game_process}' detected, switching tracking from '{self.process_id}'")
+                            self.process_id = self.game_process
+                            self.process_name = self.game_process
+                            self._game_process_switched = True
+                            # Emit timeline events for game process detection
+                            if self.progress_callback and hasattr(self.progress_callback, 'timeline') and self.progress_callback.timeline:
+                                tl = self.progress_callback.timeline
+                                tl.game_process_detected(process_name=self.game_process)
+                                tl.game_launched(self.game_name)
+                            # Focus the actual game process
+                            self.network.focus_game(process_name=self.game_process)
+                            time.sleep(1)
+                    except Exception as e:
+                        logger.debug(f"Game process switch check: {e}")
+
             else:
                 # Handle optional step failure - skip to next step instead of failing automation
                 if is_optional_step:

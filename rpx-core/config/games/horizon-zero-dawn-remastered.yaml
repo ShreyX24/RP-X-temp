@@ -8,8 +8,8 @@ metadata:
   version: '1.0'
   created_with: Raptor X Workflow Builder
   created_date: '2026-02-19 16:03:49'
-  path: '2561580"  # Launch via Steam App ID'
-  process_id: HorizonZeroDawnRemastered.exe"  # Actual process name in Task Manager
+  path: '2561580'  # Launch via Steam App ID
+  process_id: HorizonZeroDawnRemastered.exe  # Actual process name in Task Manager
   benchmark_duration: 160
   startup_wait: 90
   use_ocr_fallback: true
@@ -21,18 +21,6 @@ ocr_config:
 
 steps:
   1:
-    description: Press Enter key to start game
-    find:
-      type: any
-      text: PLAY
-      text_match: contains
-    action:
-      type: key
-      key: enter
-    expected_delay: 2
-    timeout: 20
-
-  2:
     description: Click SETTINGS button
     find:
       type: any
@@ -46,7 +34,7 @@ steps:
     expected_delay: 2
     timeout: 20
 
-  3:
+  2:
     description: Click DISPLAY button
     find:
       type: any
@@ -60,7 +48,7 @@ steps:
     expected_delay: 2
     timeout: 20
 
-  4:
+  3:
     description: Click Tab Run Benchmark to initiate benchmark
     find:
       type: any
@@ -74,11 +62,11 @@ steps:
     expected_delay: 2
     timeout: 20
 
-  5:
+  4:
     description: Click Yes to start benchmark
     find:
       type: any
-      text: Yes
+      text: "Yes"
       text_match: contains
     action:
       type: click
@@ -88,7 +76,7 @@ steps:
     expected_delay: 2
     timeout: 20
 
-  6:
+  5:
     description: Click continue to start benchmark
     find:
       type: any
@@ -100,7 +88,7 @@ steps:
     expected_delay: 2
     timeout: 20
 
-  7:
+  6:
     description: Wait for benchmark to run
     action:
       type: wait
@@ -108,7 +96,7 @@ steps:
     expected_delay: 2
     timeout: 20
 
-  8:
+  7:
     description: Click Back to exit benchmark
     find:
       type: any
@@ -122,11 +110,11 @@ steps:
     expected_delay: 2
     timeout: 20
 
-  9:
+  8:
     description: Click Yes to go main menu
     find:
       type: any
-      text: Yes
+      text: "Yes"
       text_match: contains
     action:
       type: click
@@ -136,7 +124,7 @@ steps:
     expected_delay: 2
     timeout: 20
 
-  10:
+  9:
     description: Click Back to go main menu
     find:
       type: any
@@ -154,7 +142,7 @@ steps:
       text_threshold: 0.5
       box_threshold: 1
 
-  11:
+  10:
     description: Click QUIT to exit
     find:
       type: any
@@ -168,11 +156,11 @@ steps:
     expected_delay: 2
     timeout: 20
 
-  12:
+  11:
     description: Click Yes
     find:
       type: icon
-      text: Yes
+      text: "Yes"
       text_match: contains
     action:
       type: click

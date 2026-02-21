@@ -185,7 +185,8 @@ class OmniparserClient:
                     # Get element properties
                     is_interactive = element.get('interactivity', False)
                     element_type = element.get('type', 'unknown')
-                    element_content = element.get('content', '').strip()
+                    raw_content = element.get('content', '')
+                    element_content = str(raw_content).strip() if raw_content is not None else ''
                     
                     # COMPREHENSIVE INCLUSION LOGIC - Capture everything useful
                     should_include = False

@@ -9,9 +9,17 @@ metadata:
   created_with: Raptor X Workflow Builder
   created_date: '2026-02-19 16:08:48'
   process_id: ffxiv-dawntrail-bench.exe
+  game_process: ffxiv_dx11.exe  # Actual benchmark process spawned after clicking Start
   benchmark_duration: 400
   startup_wait: 15
   use_ocr_fallback: true
+  # Standalone game - not a Steam game, found by folder name in steamapps/common/
+  standalone: true
+  launch_method: standalone
+  folder_names:
+    - ffxiv-dawntrail-bench_v11
+  exe_name: ffxiv-dawntrail-bench.exe
+  preset_filename: ffxivbenchmarklauncher.ini
 
 ocr_config:
   use_paddleocr: true

@@ -10,6 +10,8 @@ import platform
 import subprocess
 import re
 import logging
+import ctypes
+import ctypes.wintypes
 from typing import Dict, Any, Optional
 
 import psutil
@@ -140,10 +142,189 @@ def terminate_process_by_name(process_name: str) -> bool:
 def is_admin() -> bool:
     """Check if running with administrator privileges."""
     try:
-        import ctypes
         return ctypes.windll.shell32.IsUserAnAdmin()
     except Exception:
         return False
+
+
+# =============================================================================
+# Session Detection (Interactive Desktop)
+# =============================================================================
+
+def get_interactive_session_id() -> int:
+    """
+    Get the Windows session ID attached to the physical console (keyboard/monitor).
+
+    Uses WTSGetActiveConsoleSessionId to find the session that owns the
+    physical display. This is the session where GUI tools like PTAT need to run.
+
+    Returns:
+        Session ID (typically 1+) or -1 on failure
+    """
+    try:
+        session_id = ctypes.windll.kernel32.WTSGetActiveConsoleSessionId()
+        if session_id == 0xFFFFFFFF:
+            logger.warning("[Session] No active console session found")
+            return -1
+        return session_id
+    except Exception as e:
+        logger.error(f"[Session] Failed to get interactive session ID: {e}")
+        return -1
+
+
+def get_process_session_id(pid: int) -> int:
+    """
+    Get the Windows session ID that a process belongs to.
+
+    Args:
+        pid: Process ID to query
+
+    Returns:
+        Session ID or -1 on failure
+    """
+    try:
+        session_id = ctypes.wintypes.DWORD()
+        result = ctypes.windll.kernel32.ProcessIdToSessionId(
+            ctypes.wintypes.DWORD(pid),
+            ctypes.byref(session_id)
+        )
+        if result:
+            return session_id.value
+        else:
+            logger.warning(f"[Session] ProcessIdToSessionId failed for PID {pid}")
+            return -1
+    except Exception as e:
+        logger.error(f"[Session] Failed to get session ID for PID {pid}: {e}")
+        return -1
+
+
+def get_interactive_username() -> Optional[str]:
+    """
+    Get the username of the user logged into the interactive desktop session.
+
+    Uses WTS API to query the username associated with the console session.
+    This is critical for resolving paths like %USERPROFILE% when the SUT client
+    runs as a different user (e.g., Administrator via SSH) than the interactive
+    user (e.g., Local_Admin on the physical desktop).
+
+    Returns:
+        Username string (e.g., "Local_Admin") or None on failure
+    """
+    try:
+        session_id = get_interactive_session_id()
+        if session_id < 0:
+            return None
+
+        # WTS constants
+        WTSUserName = 5
+
+        # WTSQuerySessionInformation
+        wtsapi32 = ctypes.windll.wtsapi32
+        WTS_CURRENT_SERVER_HANDLE = 0
+
+        buffer = ctypes.c_wchar_p()
+        bytes_returned = ctypes.wintypes.DWORD()
+
+        result = wtsapi32.WTSQuerySessionInformationW(
+            WTS_CURRENT_SERVER_HANDLE,
+            session_id,
+            WTSUserName,
+            ctypes.byref(buffer),
+            ctypes.byref(bytes_returned)
+        )
+
+        if result and buffer.value:
+            username = buffer.value
+            wtsapi32.WTSFreeMemory(buffer)
+            logger.info(f"[Session] Interactive user: {username} (session {session_id})")
+            return username
+        else:
+            logger.warning(f"[Session] WTSQuerySessionInformation failed for session {session_id}")
+            return None
+
+    except Exception as e:
+        logger.error(f"[Session] Failed to get interactive username: {e}")
+        return None
+
+
+def is_in_interactive_session() -> bool:
+    """
+    Check if the current process is running in the interactive desktop session.
+
+    Compares the current process's session ID to the console session ID.
+    If they differ, processes launched by us won't have desktop access (e.g.,
+    PTAT can't capture GPU/thermal data without the interactive session).
+
+    Returns:
+        True if current process is in the interactive session, False otherwise
+    """
+    interactive_sid = get_interactive_session_id()
+    if interactive_sid < 0:
+        return False
+    current_sid = get_process_session_id(os.getpid())
+    is_interactive = current_sid == interactive_sid
+    logger.debug(f"[Session] Current session={current_sid}, interactive session={interactive_sid}, match={is_interactive}")
+    return is_interactive
+
+
+def check_process_health(process_name: str) -> Dict[str, Any]:
+    """
+    Extended health check for a running process. Returns detailed metrics
+    including CPU time, memory, session ID, and status — useful for detecting
+    zombie/stuck processes that are alive but doing nothing.
+
+    Args:
+        process_name: Process name to check (e.g., "PTAT.exe")
+
+    Returns:
+        Dict with running status plus health metrics (cpu_time, memory_mb,
+        session_id, create_time, proc_status)
+    """
+    logger.debug(f"[Health] Checking health of '{process_name}'")
+    proc = find_process_by_name(process_name)
+
+    if not proc:
+        logger.debug(f"[Health] '{process_name}' is not running")
+        return {
+            "status": "success",
+            "running": False
+        }
+
+    try:
+        cpu_times = proc.cpu_times()
+        cpu_time = cpu_times.user + cpu_times.system
+        memory_mb = proc.memory_info().rss / (1024 * 1024)
+        create_time = proc.create_time()
+        proc_status = proc.status()
+        session_id = get_process_session_id(proc.pid)
+
+        health = {
+            "status": "success",
+            "running": True,
+            "pid": proc.pid,
+            "name": proc.name(),
+            "cpu_time": round(cpu_time, 2),
+            "memory_mb": round(memory_mb, 1),
+            "session_id": session_id,
+            "create_time": create_time,
+            "proc_status": proc_status
+        }
+        logger.debug(f"[Health] {process_name}: cpu_time={cpu_time:.2f}s, mem={memory_mb:.1f}MB, session={session_id}, status={proc_status}")
+        return health
+
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
+        logger.warning(f"[Health] Error reading process metrics for {process_name}: {e}")
+        return {
+            "status": "success",
+            "running": True,
+            "pid": proc.pid,
+            "name": process_name,
+            "cpu_time": 0,
+            "memory_mb": 0,
+            "session_id": -1,
+            "create_time": 0,
+            "proc_status": "unknown"
+        }
 
 
 # =============================================================================

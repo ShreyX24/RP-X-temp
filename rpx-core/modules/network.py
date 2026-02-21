@@ -593,13 +593,58 @@ class NetworkManager:
             logger.error(f"Error checking process {process_name}: {e}")
             return False
 
+    def check_process_health(self, process_name: str) -> Dict[str, Any]:
+        """
+        Extended health check for a process on the SUT.
+
+        Returns detailed metrics including CPU time, memory, session ID, and
+        process status — useful for detecting zombie/stuck tracing agents.
+
+        Args:
+            process_name: Name of the process to check (e.g., "PTAT.exe")
+
+        Returns:
+            Dict with running status plus health metrics, or error dict on failure
+        """
+        try:
+            response = self.session.post(
+                f"{self.base_url}/check_process_health",
+                json={"process_name": process_name},
+                timeout=10
+            )
+            if response.status_code == 200:
+                return response.json()
+            return {"status": "error", "running": False, "message": f"HTTP {response.status_code}"}
+        except Exception as e:
+            logger.error(f"Error checking process health for {process_name}: {e}")
+            return {"status": "error", "running": False, "message": str(e)}
+
+    def get_session_info(self) -> Dict[str, Any]:
+        """
+        Get Windows session information from the SUT.
+
+        Returns which session the SUT client runs in vs. the interactive
+        desktop session. Useful for diagnosing cross-session launch issues.
+
+        Returns:
+            Dict with interactive_session_id, current_session_id, is_interactive
+        """
+        try:
+            response = self.session.get(f"{self.base_url}/session_info", timeout=5)
+            if response.status_code == 200:
+                return response.json()
+            return {"status": "error", "message": f"HTTP {response.status_code}"}
+        except Exception as e:
+            logger.error(f"Error getting session info: {e}")
+            return {"status": "error", "message": str(e)}
+
     # =========================================================================
     # SCRIPT EXECUTION (for hooks, sideload, and tracing)
     # =========================================================================
 
     def execute_command(self, path: str, args: List[str] = None, working_dir: str = None,
                         timeout: int = 300, async_exec: bool = False,
-                        shell: bool = None) -> Dict[str, Any]:
+                        shell: bool = None, interactive: bool = False) -> Dict[str, Any]:
         """
         Execute a command/script on the SUT.
 
@@ -612,6 +657,9 @@ class NetworkManager:
             timeout: Timeout in seconds for sync execution (ignored if async)
             async_exec: If True, returns immediately with PID for later termination
             shell: Whether to use shell execution (auto-detected from extension if None)
+            interactive: If True, launch in the interactive desktop session (for tracing agents
+                        that need display access like PTAT). Uses schtasks cross-session launch
+                        when the SUT client runs in a non-interactive session (e.g., SSH/Session 0).
 
         Returns:
             For sync: {"status": "success/error", "exit_code": int, "stdout": str, "stderr": str}
@@ -628,6 +676,8 @@ class NetworkManager:
                 payload["working_dir"] = working_dir
             if shell is not None:
                 payload["shell"] = shell
+            if interactive:
+                payload["interactive"] = True
 
             # HTTP timeout: command timeout + buffer for network overhead
             http_timeout = timeout + 30 if not async_exec else 30

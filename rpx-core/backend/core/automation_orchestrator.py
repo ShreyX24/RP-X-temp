@@ -1319,61 +1319,77 @@ class AutomationOrchestrator:
 
                 # ===== Wait for actual game process (if launcher is separate) =====
                 game_process_name = game_config.game_process
+                is_standalone = getattr(game_config, 'launch_method', None) == 'standalone'
+
                 if game_process_name and game_process_name != game_config.process_id:
-                    # Game has a separate launcher - wait for the actual game process
-                    if timeline:
-                        timeline.info(f"Waiting for game process: {game_process_name}")
-                    logger.info(f"Launcher started, waiting for actual game process: {game_process_name}")
-
-                    game_process_timeout = 120  # 2 minutes to wait for game process
-                    game_process_found = False
-                    start_wait = time.time()
-
-                    while time.time() - start_wait < game_process_timeout:
-                        # CHECK STOP EVENT - critical for cancellation to work
-                        if stop_event and stop_event.is_set():
-                            logger.info("Stop event set - aborting game process wait")
-                            break
-
-                        # Check if game process is running via SUT's /check_process endpoint
-                        try:
-                            check_resp = network.session.post(
-                                f"{network.base_url}/check_process",
-                                json={"process_name": game_process_name},
-                                timeout=5
-                            )
-                            if check_resp.status_code == 200:
-                                check_result = check_resp.json()
-                                if check_result.get("running"):
-                                    game_process_found = True
-                                    detected_name = check_result.get("name", game_process_name)
-                                    detected_pid = check_result.get("pid", "N/A")
-                                    logger.info(f"Game process '{detected_name}' detected (PID: {detected_pid})!")
-                                    if timeline:
-                                        timeline.info(f"Game process detected: {detected_name} (PID: {detected_pid})")
-                                    break
-                        except Exception as e:
-                            logger.debug(f"Process check failed: {e}")
-
-                        time.sleep(5)  # Check every 5 seconds
-
-                    if not game_process_found:
-                        logger.warning(f"Game process '{game_process_name}' not detected within {game_process_timeout}s, continuing anyway")
+                    if is_standalone:
+                        # Standalone two-PID: game_process is spawned by automation (e.g., clicking Start in launcher UI)
+                        # Skip waiting here - SimpleAutomation handles game_process detection after each step
+                        logger.info(f"Standalone game: skipping game_process wait for '{game_process_name}' (spawned by automation)")
                         if timeline:
-                            timeline.warning(f"Game process '{game_process_name}' not detected, continuing with automation")
+                            timeline.info(f"Game process '{game_process_name}' will be detected during automation")
+                    else:
+                        # Steam/other: game_process auto-launches, wait for it here
+                        if timeline:
+                            timeline.info(f"Waiting for game process: {game_process_name}")
+                        logger.info(f"Launcher started, waiting for actual game process: {game_process_name}")
+
+                        game_process_timeout = 120  # 2 minutes to wait for game process
+                        game_process_found = False
+                        start_wait = time.time()
+
+                        while time.time() - start_wait < game_process_timeout:
+                            # CHECK STOP EVENT - critical for cancellation to work
+                            if stop_event and stop_event.is_set():
+                                logger.info("Stop event set - aborting game process wait")
+                                break
+
+                            # Check if game process is running via SUT's /check_process endpoint
+                            try:
+                                check_resp = network.session.post(
+                                    f"{network.base_url}/check_process",
+                                    json={"process_name": game_process_name},
+                                    timeout=5
+                                )
+                                if check_resp.status_code == 200:
+                                    check_result = check_resp.json()
+                                    if check_result.get("running"):
+                                        game_process_found = True
+                                        detected_name = check_result.get("name", game_process_name)
+                                        detected_pid = check_result.get("pid", "N/A")
+                                        logger.info(f"Game process '{detected_name}' detected (PID: {detected_pid})!")
+                                        if timeline:
+                                            timeline.info(f"Game process detected: {detected_name} (PID: {detected_pid})")
+                                        break
+                            except Exception as e:
+                                logger.debug(f"Process check failed: {e}")
+
+                            time.sleep(5)  # Check every 5 seconds
+
+                        if not game_process_found:
+                            logger.warning(f"Game process '{game_process_name}' not detected within {game_process_timeout}s, continuing anyway")
+                            if timeline:
+                                timeline.warning(f"Game process '{game_process_name}' not detected, continuing with automation")
 
                 # ===== Game Initialization Wait =====
-                # Use init_wait from config if available, otherwise fall back to startup_wait or default 30s
-                init_wait = game_config.init_wait if hasattr(game_config, 'init_wait') and game_config.init_wait else (startup_wait if startup_wait else 30)
-                if timeline:
-                    timeline.game_initializing(init_wait)
-                logger.info(f"Game process detected, waiting {init_wait}s for full game initialization...")
-                time.sleep(init_wait)
-                if timeline:
-                    timeline.game_ready()
-                    # NOW the game is actually launched and ready for input
-                    timeline.game_launched(game_config.name)
-                logger.info(f"Game fully initialized and ready: {game_config.name}")
+                if is_standalone and game_process_name and game_process_name != game_config.process_id:
+                    # Standalone two-PID: launcher is ready, game will be launched by automation
+                    # Skip init_wait since the "game" (launcher UI) is already responsive
+                    if timeline:
+                        timeline.info("Launcher UI ready, starting automation...")
+                    logger.info(f"Standalone launcher ready, skipping init_wait (game_process '{game_process_name}' will be detected by automation)")
+                else:
+                    # Standard flow: wait for game initialization
+                    init_wait = game_config.init_wait if hasattr(game_config, 'init_wait') and game_config.init_wait else (startup_wait if startup_wait else 30)
+                    if timeline:
+                        timeline.game_initializing(init_wait)
+                    logger.info(f"Game process detected, waiting {init_wait}s for full game initialization...")
+                    time.sleep(init_wait)
+                    if timeline:
+                        timeline.game_ready()
+                        # NOW the game is actually launched and ready for input
+                        timeline.game_launched(game_config.name)
+                    logger.info(f"Game fully initialized and ready: {game_config.name}")
 
             # Check if run was stopped during initialization
             if run.status != RunStatus.RUNNING:
@@ -1400,11 +1416,26 @@ class AutomationOrchestrator:
                     if timeline:
                         timeline.info(f"Focusing game window (waiting {focus_delay}s)...")
 
+                # Use game_process for focus if it's already running, otherwise use launcher process_id
+                focus_process = game_config.process_id
+                if game_config.game_process:
+                    try:
+                        check_resp = requests.post(
+                            f"http://{device.ip}:{device.port}/check_process",
+                            json={"process_name": game_config.game_process},
+                            timeout=5
+                        )
+                        if check_resp.status_code == 200 and check_resp.json().get("running"):
+                            focus_process = game_config.game_process
+                            logger.info(f"Game process '{game_config.game_process}' already running, focusing it instead of launcher")
+                    except Exception:
+                        pass
+
                 sut_base_url = f"http://{device.ip}:{device.port}"
                 focus_resp = requests.post(
                     f"{sut_base_url}/focus",
                     json={
-                        "process_name": game_config.process_id,
+                        "process_name": focus_process,
                         "minimize_others": minimize_others
                     },
                     timeout=10

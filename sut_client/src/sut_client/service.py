@@ -30,7 +30,7 @@ from .ws_client import WebSocketClientThread
 from .input_controller import InputController
 from .launcher import launch_game, cancel_launch, terminate_game, get_game_status, get_current_game_info, find_process_by_name
 from .window import ensure_window_foreground_v2, minimize_other_windows
-from .system import check_process, kill_process
+from .system import check_process, check_process_health, kill_process, get_interactive_session_id, get_process_session_id, is_in_interactive_session, get_interactive_username, find_process_by_name as system_find_process
 from .steam import login_steam, get_steam_library_folders, get_steam_auto_login_user, is_steam_running, verify_steam_login, find_standalone_game
 from .hardware import set_dpi_awareness, get_screen_resolution, get_cpu_model, get_gpu_model
 from .display import get_display_manager
@@ -1450,6 +1450,77 @@ def create_app() -> Flask:
             logger.error(f"Check process error: {e}")
             return jsonify({"status": "error", "message": str(e)}), 500
 
+    @app.route('/check_process_health', methods=['POST'])
+    def check_process_health_route():
+        """
+        Extended health check for a running process.
+
+        Returns detailed metrics (CPU time, memory, session, status) useful
+        for detecting zombie/stuck processes.
+
+        Request body:
+        {
+            "process_name": "PTAT.exe"
+        }
+
+        Response:
+        {
+            "status": "success",
+            "running": true,
+            "pid": 1234,
+            "name": "PTAT.exe",
+            "cpu_time": 12.5,
+            "memory_mb": 45.2,
+            "session_id": 1,
+            "create_time": 1708000000.0,
+            "proc_status": "running"
+        }
+        """
+        try:
+            data = request.get_json() or {}
+            process_name = data.get('process_name')
+
+            if not process_name:
+                return jsonify({"status": "error", "message": "Missing process_name"}), 400
+
+            result = check_process_health(process_name)
+            return jsonify(result)
+
+        except Exception as e:
+            logger.error(f"Check process health error: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route('/session_info', methods=['GET'])
+    def session_info():
+        """
+        Get Windows session information for diagnostics.
+
+        Returns which session the SUT client is running in vs. the interactive
+        desktop session. When they differ, tools like PTAT need cross-session launch.
+
+        Response:
+        {
+            "interactive_session_id": 1,
+            "current_session_id": 0,
+            "is_interactive": false,
+            "interactive_username": "Local_Admin"
+        }
+        """
+        try:
+            import os as _os
+            interactive_sid = get_interactive_session_id()
+            current_sid = get_process_session_id(_os.getpid())
+            interactive_user = get_interactive_username()
+            return jsonify({
+                "interactive_session_id": interactive_sid,
+                "current_session_id": current_sid,
+                "is_interactive": current_sid == interactive_sid and interactive_sid >= 0,
+                "interactive_username": interactive_user
+            })
+        except Exception as e:
+            logger.error(f"Session info error: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
     @app.route('/kill_process', methods=['POST'])
     @app.route('/kill', methods=['POST'])  # Alias for convenience
     def kill_process_route():
@@ -1526,6 +1597,7 @@ def create_app() -> Flask:
             timeout = data.get('timeout', 300)
             async_exec = data.get('async', False)
             shell = data.get('shell')
+            interactive = data.get('interactive', False)
 
             if not path:
                 return jsonify({"status": "error", "message": "Missing 'path' parameter"}), 400
@@ -1563,25 +1635,121 @@ def create_app() -> Flask:
                 logger.info(f"Working directory: {working_dir}")
 
             if async_exec:
-                # Async execution - return immediately with PID
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=working_dir,
-                    shell=shell and not path.lower().endswith('.ps1'),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
-                )
+                # Check if we need cross-session launch for interactive desktop
+                need_interactive_launch = interactive and not is_in_interactive_session()
 
-                # Track the process for later termination
-                _running_processes[process.pid] = process
-                logger.info(f"Started async process with PID: {process.pid}")
+                if need_interactive_launch:
+                    # Cross-session launch via schtasks so the process runs in
+                    # the interactive desktop session (where PTAT/PresentMon need
+                    # access to the display/GPU).
+                    import uuid
+                    task_name = f"RPX_{os.path.splitext(os.path.basename(path))[0]}_{int(time.time())}"
+                    # Build the full command string for schtasks /TR
+                    full_cmd = subprocess.list2cmdline(cmd)
 
-                return jsonify({
-                    "status": "started",
-                    "pid": process.pid,
-                    "command": cmd[0]
-                })
+                    logger.info(f"[Interactive] Cross-session launch via schtasks: {task_name}")
+                    logger.info(f"[Interactive] Command: {full_cmd}")
+
+                    try:
+                        # Create one-time scheduled task that runs interactively
+                        create_result = subprocess.run(
+                            ["schtasks", "/Create", "/TN", task_name,
+                             "/TR", full_cmd,
+                             "/SC", "ONCE", "/ST", "00:00",
+                             "/F", "/IT", "/RL", "HIGHEST"],
+                            capture_output=True, text=True, timeout=10
+                        )
+
+                        if create_result.returncode != 0:
+                            logger.error(f"[Interactive] schtasks /Create failed: {create_result.stderr}")
+                            return jsonify({
+                                "status": "error",
+                                "message": f"Failed to create scheduled task: {create_result.stderr}"
+                            }), 500
+
+                        # Run the task immediately
+                        run_result = subprocess.run(
+                            ["schtasks", "/Run", "/TN", task_name],
+                            capture_output=True, text=True, timeout=10
+                        )
+
+                        if run_result.returncode != 0:
+                            logger.error(f"[Interactive] schtasks /Run failed: {run_result.stderr}")
+                            # Clean up the task definition
+                            subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
+                                         capture_output=True, timeout=5)
+                            return jsonify({
+                                "status": "error",
+                                "message": f"Failed to run scheduled task: {run_result.stderr}"
+                            }), 500
+
+                        # Wait briefly for the process to start, then find its PID
+                        time.sleep(2)
+
+                        # Find PID by process name
+                        exe_name = os.path.basename(path)
+                        found_proc = system_find_process(exe_name)
+                        pid = found_proc.pid if found_proc else -1
+
+                        # Clean up the task definition (process keeps running)
+                        subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
+                                     capture_output=True, timeout=5)
+
+                        if pid > 0:
+                            logger.info(f"[Interactive] Started in interactive session with PID: {pid}")
+                            return jsonify({
+                                "status": "started",
+                                "pid": pid,
+                                "command": cmd[0],
+                                "interactive": True
+                            })
+                        else:
+                            logger.warning(f"[Interactive] Task launched but couldn't find PID for {exe_name}")
+                            return jsonify({
+                                "status": "started",
+                                "pid": -1,
+                                "command": cmd[0],
+                                "interactive": True,
+                                "warning": f"Process launched but PID not found for {exe_name}"
+                            })
+
+                    except subprocess.TimeoutExpired:
+                        logger.error(f"[Interactive] schtasks command timed out")
+                        # Try to clean up
+                        subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
+                                     capture_output=True, timeout=5)
+                        return jsonify({
+                            "status": "error",
+                            "message": "Interactive launch timed out"
+                        }), 500
+
+                else:
+                    # Normal async execution (already in interactive session, or not requested)
+                    if interactive and is_in_interactive_session():
+                        logger.info("[Interactive] Already in interactive session, using normal launch")
+
+                    # CRITICAL: Use DEVNULL, not PIPE, for async processes.
+                    # PIPE causes deadlock when the buffer fills and nobody reads it.
+                    # PTAT, PresentMon etc. write diagnostic output that fills the
+                    # pipe buffer (~64KB), then block forever with 0 CPU time.
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=working_dir,
+                        shell=shell and not path.lower().endswith('.ps1'),
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+                    )
+
+                    # Track the process for later termination
+                    _running_processes[process.pid] = process
+                    logger.info(f"Started async process with PID: {process.pid}")
+
+                    return jsonify({
+                        "status": "started",
+                        "pid": process.pid,
+                        "command": cmd[0]
+                    })
             else:
                 # Sync execution - wait for completion
                 try:
@@ -1796,10 +1964,12 @@ def create_app() -> Flask:
 
             logger.info(f"Restart requested - launching {restarter}")
 
-            # Spawn restarter in a new detached console window
+            # Spawn restarter in a new console window.
+            # NOTE: CREATE_NEW_CONSOLE and DETACHED_PROCESS are mutually exclusive
+            # on Windows — using both causes WinError 87.
             subprocess.Popen(
                 ["cmd", "/c", str(restarter)],
-                creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS,
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
                 close_fds=True,
             )
 
