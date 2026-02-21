@@ -183,10 +183,13 @@ class DeploymentManager:
             if not push_result.success:
                 raise RuntimeError(f"Push failed: {push_result.error}")
 
-            # Step 5: Wait for SUT to go offline then come back
+            # Step 5: Trigger restart via /restart endpoint, then wait for SUT to come back
             status.status = "restarting"
-            logger.info(f"[Deploy {sut_ip}] Waiting for SUT to restart...")
-            time.sleep(10)  # Give SUT time to begin restart
+            logger.info(f"[Deploy {sut_ip}] Triggering restart...")
+            restart_result = self.sut_client.restart(sut_ip, 8080)
+            if not restart_result.success:
+                logger.warning(f"[Deploy {sut_ip}] Restart call failed: {restart_result.error}")
+            time.sleep(5)  # Give SUT time to go down
 
             ready_result = self.sut_client.wait_for_sut_ready(
                 sut_ip, 8080, timeout=self.restart_timeout, interval=5

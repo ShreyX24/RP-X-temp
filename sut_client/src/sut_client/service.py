@@ -2023,53 +2023,14 @@ def create_app() -> Flask:
                 logger.info(f"Copying updated files to {package_dir}")
                 shutil.copytree(str(extract_dir), str(package_dir), dirs_exist_ok=True)
 
-                # Run pip install -e .
-                logger.info("Running pip install -e .")
-                pip_result = subprocess.run(
-                    ["pip", "install", "-e", "."],
-                    cwd=str(package_dir),
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-
-                if pip_result.returncode != 0:
-                    error_msg = pip_result.stderr[:500] if pip_result.stderr else "unknown error"
-                    logger.error(f"pip install failed: {error_msg}")
-                    _last_update_result = f"failed: pip install error"
-                    _last_update_time = datetime.now().isoformat()
-                    return jsonify({
-                        "status": "error",
-                        "message": f"pip install -e . failed: {error_msg}"
-                    }), 500
-
-                logger.info("pip install -e . succeeded")
-
-                # Clear all __pycache__ dirs
-                for cache_dir in package_dir.rglob("__pycache__"):
-                    try:
-                        shutil.rmtree(str(cache_dir))
-                    except Exception as e:
-                        logger.warning(f"Failed to remove {cache_dir}: {e}")
-
                 _last_update_result = "success"
                 _last_update_time = datetime.now().isoformat()
 
-                # Spawn restarter in background (same pattern as /restart)
-                restarter = package_dir / "restarter.bat"
-                if restarter.exists():
-                    logger.info(f"Update applied - launching restarter: {restarter}")
-                    subprocess.Popen(
-                        ["cmd", "/c", str(restarter)],
-                        creationflags=subprocess.CREATE_NEW_CONSOLE,
-                        close_fds=True,
-                    )
-                else:
-                    logger.warning(f"restarter.bat not found at {restarter} - update applied but no restart")
+                logger.info("Files extracted. Call /restart to activate (pip install runs during restart).")
 
                 return jsonify({
                     "status": "success",
-                    "message": f"Update to {version} applied, restarting",
+                    "message": f"Update to {version} applied. Call /restart to activate.",
                     "version": version,
                 })
 
@@ -2105,8 +2066,18 @@ def create_app() -> Flask:
 
         Spawns the restarter script in the background and returns immediately.
         The restarter will kill this process and start a fresh instance.
+
+        Optional JSON body:
+            {"mode": "debug"}   - restart in debug mode
+            {"mode": "raptor"}  - restart in normal mode
+        If no body/mode, the restarter uses whatever mode was last saved.
         """
         import subprocess
+
+        MODE_ARGS = {
+            "debug": ["--debug"],
+            "raptor": [],
+        }
 
         try:
             # Find restarter.bat relative to the sut_client package
@@ -2119,20 +2090,42 @@ def create_app() -> Flask:
                     "message": f"restarter.bat not found at {restarter}"
                 }), 404
 
-            logger.info(f"Restart requested - launching {restarter}")
+            # If caller specified a mode, update launch files before restart
+            mode = None
+            body = request.get_json(silent=True) or {}
+            if body.get("mode") in MODE_ARGS:
+                import json as _json
+                mode = body["mode"]
+                args_list = MODE_ARGS[mode]
+                (package_dir / "launch_mode.json").write_text(_json.dumps({
+                    "mode": mode,
+                    "command": "sut-client",
+                    "args": args_list,
+                }), encoding="utf-8")
+                (package_dir / "launch_cmd.txt").write_text(
+                    " ".join(["sut-client"] + args_list), encoding="utf-8"
+                )
+                logger.info(f"Restart requested with mode={mode} - launching {restarter}")
+            else:
+                logger.info(f"Restart requested (preserving current mode) - launching {restarter}")
 
-            # Spawn restarter in a new console window.
-            # NOTE: CREATE_NEW_CONSOLE and DETACHED_PROCESS are mutually exclusive
-            # on Windows — using both causes WinError 87.
+            # Spawn restarter in a new, fully independent console window.
+            # CREATE_BREAKAWAY_FROM_JOB (0x01000000) detaches from any parent
+            # job object (e.g. OpenSSH's job) so the restarter survives when
+            # sut-client.exe is killed.
+            CREATE_BREAKAWAY_FROM_JOB = 0x01000000
             subprocess.Popen(
                 ["cmd", "/c", str(restarter)],
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
+                creationflags=subprocess.CREATE_NEW_CONSOLE | CREATE_BREAKAWAY_FROM_JOB,
                 close_fds=True,
             )
 
+            msg = "Restart initiated"
+            if mode:
+                msg += f" (mode: {mode})"
             return jsonify({
                 "status": "success",
-                "message": "Restart initiated"
+                "message": msg
             })
         except Exception as e:
             logger.error(f"Restart error: {e}")

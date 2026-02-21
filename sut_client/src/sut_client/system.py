@@ -35,6 +35,11 @@ def find_process_by_name(process_name: str, exact_only: bool = True) -> Optional
     Returns:
         psutil.Process or None
     """
+    # Normalize: if process_name lacks .exe, also try with .exe appended
+    names_to_match = [process_name.lower()]
+    if not process_name.lower().endswith('.exe'):
+        names_to_match.append(process_name.lower() + '.exe')
+
     try:
         for proc in psutil.process_iter(['pid', 'name', 'exe']):
             try:
@@ -42,9 +47,9 @@ def find_process_by_name(process_name: str, exact_only: bool = True) -> Optional
                 proc_exe = os.path.basename(proc.info['exe']) if proc.info['exe'] else None
 
                 if exact_only:
-                    # EXACT match only (case-insensitive)
-                    if (proc_name and proc_name.lower() == process_name.lower()) or \
-                       (proc_exe and proc_exe.lower() == process_name.lower()):
+                    # EXACT match only (case-insensitive), also try with .exe suffix
+                    if (proc_name and proc_name.lower() in names_to_match) or \
+                       (proc_exe and proc_exe.lower() in names_to_match):
                         logger.info(f"[EXACT] Found process: {proc_name} (PID: {proc.info['pid']})")
                         return psutil.Process(proc.info['pid'])
                 else:

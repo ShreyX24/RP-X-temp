@@ -554,6 +554,29 @@ class SUTClient:
                 error=str(e)
             )
 
+    def restart(self, ip: str, port: int = 8080, mode: str = None) -> ActionResult:
+        """Trigger SUT client restart via /restart endpoint.
+
+        Args:
+            ip: SUT IP address
+            port: SUT port
+            mode: Optional launch mode override ("debug", "raptor").
+                  If None, the SUT restarts with its last-used mode.
+        """
+        try:
+            payload = {"mode": mode} if mode else None
+            response = self.session.post(
+                f"http://{ip}:{port}/restart",
+                json=payload,
+                timeout=10,
+            )
+            if response.status_code == 200:
+                return ActionResult(success=True, data=response.json())
+            else:
+                return ActionResult(success=False, error=f"HTTP {response.status_code}: {response.text}")
+        except requests.RequestException as e:
+            return ActionResult(success=False, error=str(e))
+
     def push_update(self, ip: str, port: int, archive_path: str, version: str) -> ActionResult:
         """Push a sut_client update archive to a SUT.
 

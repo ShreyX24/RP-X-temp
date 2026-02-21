@@ -9,9 +9,9 @@ metadata:
   created_with: Raptor X Workflow Builder
   created_date: '2026-02-21 12:30:18'
   path: 1847520
-  process_id: Launcher
+  process_id: Launcher.exe
   process_name: Launcher.exe
-  game_process: HITMAN3  # The actual game process to track after launcher
+  game_process: HITMAN3.exe  # The actual game process to track after launcher
   benchmark_name: Built-in Benchmark - Dubai
   benchmark_duration: 130
   startup_wait: 20
@@ -109,7 +109,7 @@ steps:
     expected_delay: 2
     timeout: 20
     ocr_config:
-      use_paddleocr: true
+      use_paddleocr: false
       text_threshold: 0.1
       box_threshold: 0.05
 

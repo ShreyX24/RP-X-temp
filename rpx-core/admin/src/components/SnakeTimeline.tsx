@@ -204,7 +204,27 @@ function getEventLabel(event: TimelineEvent): string {
       if (msg.includes('game ready')) return 'Game Ready';
       if (msg.includes('benchmark')) return 'Benchmark';
       if (msg.includes('screenshot')) return 'Screenshot';
-      if (msg.includes('waiting')) return 'Waiting...';
+      if (msg.includes('waiting') || msg.includes('wait')) {
+        // Extract wait duration from metadata or message
+        const waitSec =
+          (event.metadata?.countdown as number) ||
+          (event.metadata?.timeout as number) ||
+          (event.metadata?.seconds as number) ||
+          (event.metadata?.wait_seconds as number) ||
+          (event.metadata?.duration as number) || 0;
+        if (waitSec > 0) {
+          return waitSec >= 60 ? `Wait ${Math.round(waitSec / 60)}m` : `Wait ${waitSec}s`;
+        }
+        // Try to extract what it's waiting for
+        if (msg.includes('game')) return 'Wait: Game';
+        if (msg.includes('steam')) return 'Wait: Steam';
+        if (msg.includes('process')) return 'Wait: Process';
+        if (msg.includes('window')) return 'Wait: Window';
+        // Parse "waiting Xs" from message text
+        const secMatch = event.message.match(/(\d+)\s*s/i);
+        if (secMatch) return `Wait ${secMatch[1]}s`;
+        return 'Waiting...';
+      }
       if (msg.includes('detected')) return 'Detected';
       if (msg.includes('found')) return 'Found';
       // Resolution changes
@@ -240,7 +260,7 @@ function getEventLabel(event: TimelineEvent): string {
     preset_skipped: 'Preset Skipped',
     game_launching: 'Launching Game',
     game_launched: 'Game Launched',
-    game_process_waiting: 'Waiting Process',
+    game_process_waiting: 'Wait: Process',
     game_process_detected: 'Process Found',
     steam_dialog_checking: 'Check Dialog',
     steam_dialog_handled: 'Dialog OK',

@@ -447,6 +447,28 @@ def _run_scheduled_task() -> bool:
         return False
 
 
+def _save_launch_mode(args):
+    """Save current launch mode so restarter.bat can restart with the same flags."""
+    import json as _json
+
+    mode = "debug" if args.debug else "raptor"
+    cli_args = sys.argv[1:]
+    package_dir = Path(__file__).resolve().parent.parent.parent
+    cmd_parts = ["sut-client"] + cli_args
+
+    try:
+        # JSON for API consumers
+        (package_dir / "launch_mode.json").write_text(_json.dumps({
+            "mode": mode,
+            "command": "sut-client",
+            "args": cli_args,
+        }), encoding="utf-8")
+        # Plain text for restarter.bat (avoids batch quoting headaches)
+        (package_dir / "launch_cmd.txt").write_text(" ".join(cmd_parts), encoding="utf-8")
+    except Exception:
+        pass  # Non-critical — restarter falls back to plain sut-client
+
+
 def main():
     """Main entry point for the SUT client"""
     # Parse arguments first (before admin elevation so args are passed through)
@@ -615,6 +637,9 @@ def main():
             print("To get full functionality, right-click and 'Run as administrator'")
             print("Or install as service: sut-client --install-service")
             print()
+
+    # Persist launch mode so restarter.bat can restart with the same flags
+    _save_launch_mode(args)
 
     # Set window title
     _set_window_title("sut-client")
